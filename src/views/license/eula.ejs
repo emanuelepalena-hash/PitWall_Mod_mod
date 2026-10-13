@@ -1,0 +1,129 @@
+<%- include('../partials/header', { pageTitle: t('common.licencia') }) %>
+<div class="container container--narrow">
+
+  <a href="/" class="vt-back-link" style="margin-top:1rem">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M19 12H5M12 19l-7-7 7-7"/></svg>
+    <%= t('common.inicio') %>
+  </a>
+
+  <div class="page-header">
+    <h1 class="page-title"><%= t('common.licencia') %></h1>
+    <p class="page-subtitle">PitWall · GNU Affero General Public License v3</p>
+  </div>
+
+  <%# El EULA es un texto largo con estructura propia, así que va en un bloque por
+      idioma en vez de en el diccionario. Al añadir un idioma: esta lista y su bloque
+      de contenido más abajo. El que no tenga bloque cae al inglés. %>
+  <% const EULA_LANGS = [['es', 'Español'], ['en', 'English'], ['it', 'Italiano']]; %>
+  <div class="eula-lang-switch">
+    <% EULA_LANGS.forEach(([code, nombre]) => { %>
+      <a href="<%= typeof langUrl !== 'undefined' ? langUrl(code) : '/eula?lang=' + code %>"
+         class="btn btn--ghost btn--sm <%= lang === code ? 'btn--active' : '' %>"><%= nombre %></a>
+    <% }) %>
+  </div>
+
+  <div class="eula-body">
+  <% if (lang === 'es') { %>
+
+    <p><strong>PitWall es software libre.</strong> Copyright &copy; 2026 Víctor González Gómez.</p>
+    <p>Este programa se distribuye bajo la <strong>Licencia Pública General Affero de GNU, versión 3 (AGPLv3)</strong> o, a tu elección, cualquier versión posterior.</p>
+
+    <h2>Qué puedes hacer</h2>
+    <ul>
+      <li><strong>Usarlo</strong> para lo que quieras, sin coste.</li>
+      <li><strong>Estudiar</strong> cómo funciona y examinar el código fuente.</li>
+      <li><strong>Modificarlo</strong> y adaptarlo a tus necesidades.</li>
+      <li><strong>Redistribuirlo</strong>, con o sin cambios.</li>
+    </ul>
+
+    <h2>Qué debes respetar</h2>
+    <ul>
+      <li>Cualquier versión que <strong>distribuyas o que ofrezcas a través de una red</strong> (por ejemplo, sirviéndola por web) debe publicarse también bajo la <strong>AGPLv3</strong> y poner su <strong>código fuente completo a disposición</strong> de los usuarios.</li>
+      <li>Debes conservar los avisos de copyright y de licencia.</li>
+      <li>El software se ofrece <strong>SIN NINGUNA GARANTÍA</strong>, en la medida permitida por la ley.</li>
+    </ul>
+
+    <p>El texto legal completo prevalece sobre este resumen. Puedes consultarlo aquí:</p>
+    <ul>
+      <li><a href="https://github.com/vgonzalezgomez85/PitWall-Manager" target="_blank" rel="noopener">Código fuente de PitWall (GitHub)</a></li>
+      <li><a href="https://www.gnu.org/licenses/agpl-3.0.html" target="_blank" rel="noopener">Texto completo de la GNU AGPLv3</a></li>
+    </ul>
+
+    <p style="font-size:.82rem">El nombre «PitWall» y el logotipo no forman parte de la licencia del código.</p>
+
+  <% } else if (lang === 'it') { %>
+
+    <p><strong>PitWall è software libero.</strong> Copyright &copy; 2026 Víctor González Gómez.</p>
+    <p>Questo programma è distribuito sotto la <strong>GNU Affero General Public License, versione 3 (AGPLv3)</strong> o, a tua scelta, qualsiasi versione successiva.</p>
+
+    <h2>Cosa puoi fare</h2>
+    <ul>
+      <li><strong>Usarlo</strong> per qualsiasi scopo, gratuitamente.</li>
+      <li><strong>Studiare</strong> come funziona ed esaminare il codice sorgente.</li>
+      <li><strong>Modificarlo</strong> e adattarlo alle tue esigenze.</li>
+      <li><strong>Ridistribuirlo</strong>, con o senza modifiche.</li>
+    </ul>
+
+    <h2>Cosa devi rispettare</h2>
+    <ul>
+      <li>Qualsiasi versione che <strong>distribuisci o che offri attraverso una rete</strong> (ad esempio, servendola via web) deve essere pubblicata anch'essa sotto la <strong>AGPLv3</strong> e rendere disponibile agli utenti il suo <strong>codice sorgente completo</strong>.</li>
+      <li>Devi conservare gli avvisi di copyright e di licenza.</li>
+      <li>Il software è fornito <strong>SENZA ALCUNA GARANZIA</strong>, nei limiti consentiti dalla legge.</li>
+    </ul>
+
+    <p>Il testo legale completo prevale su questo riassunto. Puoi consultarlo qui:</p>
+    <ul>
+      <li><a href="https://github.com/vgonzalezgomez85/PitWall-Manager" target="_blank" rel="noopener">Codice sorgente di PitWall (GitHub)</a></li>
+      <li><a href="https://www.gnu.org/licenses/agpl-3.0.html" target="_blank" rel="noopener">Testo completo della GNU AGPLv3</a></li>
+    </ul>
+
+    <p style="font-size:.82rem">Il nome «PitWall» e il logo non fanno parte della licenza del codice.</p>
+
+  <% } else { %>
+
+    <p><strong>PitWall is free software.</strong> Copyright &copy; 2026 Víctor González Gómez.</p>
+    <p>This program is distributed under the <strong>GNU Affero General Public License, version 3 (AGPLv3)</strong>, or (at your option) any later version.</p>
+
+    <h2>What you may do</h2>
+    <ul>
+      <li><strong>Use</strong> it for any purpose, free of charge.</li>
+      <li><strong>Study</strong> how it works and inspect the source code.</li>
+      <li><strong>Modify</strong> it and adapt it to your needs.</li>
+      <li><strong>Redistribute</strong> it, with or without changes.</li>
+    </ul>
+
+    <h2>What you must respect</h2>
+    <ul>
+      <li>Any version you <strong>distribute or make available over a network</strong> (e.g. hosting it as a web service) must also be released under the <strong>AGPLv3</strong> and its <strong>complete source code made available</strong> to users.</li>
+      <li>You must keep the copyright and license notices.</li>
+      <li>The software is provided <strong>WITH NO WARRANTY</strong>, to the extent permitted by law.</li>
+    </ul>
+
+    <p>The full legal text prevails over this summary. You can read it here:</p>
+    <ul>
+      <li><a href="https://github.com/vgonzalezgomez85/PitWall-Manager" target="_blank" rel="noopener">PitWall source code (GitHub)</a></li>
+      <li><a href="https://www.gnu.org/licenses/agpl-3.0.html" target="_blank" rel="noopener">Full text of the GNU AGPLv3</a></li>
+    </ul>
+
+    <p style="font-size:.82rem">The name "PitWall" and the logo are not part of the code license.</p>
+
+  <% } %>
+  </div>
+
+</div>
+
+<style>
+.eula-lang-switch { display:flex; gap:.5rem; margin-bottom:1.5rem; }
+.btn--active { background:#21262d; color:#e6edf3; }
+.page-subtitle { color:#8b949e; font-size:.9rem; margin-top:.25rem; }
+.eula-body { background:#000000; border:1px solid #21262d; border-radius:12px; padding:2rem; line-height:1.7; }
+.eula-body h2 { color:#e6edf3; font-size:1rem; font-weight:600; margin:1.75rem 0 .5rem; padding-bottom:.4rem; border-bottom:1px solid #21262d; }
+.eula-body h2:first-child { margin-top:0; }
+.eula-body p { color:#8b949e; margin:.5rem 0; font-size:.9rem; }
+.eula-body ul { color:#8b949e; font-size:.9rem; padding-left:1.5rem; margin:.5rem 0; }
+.eula-body li { margin:.3rem 0; }
+.eula-body strong { color:#c9d1d9; }
+.eula-body a { color:#58a6ff; }
+</style>
+
+<%- include('../partials/footer') %>

@@ -1,0 +1,77 @@
+<%- include('../partials/header', { pageTitle: t('common.conexion_ecosistema') }) %>
+
+
+<div class="vt-page st-page st-page--solo">
+  <div class="st-top">
+    <a href="/" class="vt-back-link">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M19 12H5M12 19l-7-7 7-7"/></svg>
+      <%= t('common.inicio') %>
+    </a>
+    <span class="st-top__sep"></span>
+    <h1 class="st-top__h"><%= t('common.conexion_ecosistema') %></h1>
+    <span class="st-top__fill"></span>
+    <div class="vt-port-pill <%= enabled ? '' : 'is-sim' %>">
+      <span class="dot"></span> <%= enabled ? (t('ecosystem.control_puede_conectarse')) : (t('ecosystem.control_bloqueado')) %>
+    </div>
+  </div>
+
+  <div class="st-solo">
+    <header class="st-sec__h">
+      <h2><%= t('ecosystem.puente_con_pitwall_control') %></h2>
+      <p><%= t('ecosystem.controla_si_pitwall_control_puede_conectarse_a') %></p>
+    </header>
+
+    <form method="POST" action="/ecosystem" class="st-card">
+      <div class="st-row">
+        <div class="db-ico">
+          <svg viewBox="0 0 24 24"><path d="M5.5 11.5a9 9 0 0 1 13 0M8.5 14.5a5 5 0 0 1 7 0M12 18h.01"/></svg>
+        </div>
+        <div class="st-row__txt">
+          <div class="st-row__t"><%= t('ecosystem.permitir_que_pitwall_control_se_conecte') %></div>
+          <div class="st-row__d">
+            <%= t('ecosystem.activado_control_puede_enviarnos_tandas_por_la') %>
+          </div>
+        </div>
+        <button type="button" class="vt-switch <%= enabled ? 'is-on' : '' %>" id="ecoSwitch" role="switch" aria-checked="<%= !!enabled %>" aria-label="<%= t('ecosystem.permitir_que_pitwall_control_se_conecte') %>"></button>
+        <input type="hidden" name="ecosystem_control_enabled" id="ecoInput" value="<%= enabled ? '1' : '' %>">
+      </div>
+      <div class="st-row">
+        <span class="st-top__fill"></span>
+        <button type="submit" class="vt-btn vt-btn--primary"><%= t('client.common.guardar') %></button>
+      </div>
+    </form>
+
+    <header class="st-sec__h eco-gap">
+      <h2><%= t('ecosystem.pin_de_emparejamiento') %></h2>
+      <p><%= t('ecosystem.cuando_control_se_conecta_desde_otro') %></p>
+    </header>
+
+    <div class="st-card">
+      <div class="eco-pin"><%= pin %></div>
+      <div class="st-row">
+        <div class="st-row__txt">
+          <div class="st-row__d">
+            <%= t('ecosystem.sin_red_tambien_puedes_importar_una_tanda_a_mano') %>
+          </div>
+        </div>
+        <a class="vt-btn vt-btn--ghost vt-btn--sm" href="/import/tanda"><%= t('ecosystem.importar_tanda') %></a>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+(function () {
+  var sw  = document.getElementById('ecoSwitch');
+  var inp = document.getElementById('ecoInput');
+  if (sw && inp) {
+    sw.addEventListener('click', function () {
+      var on = sw.classList.toggle('is-on');
+      sw.setAttribute('aria-checked', on ? 'true' : 'false');
+      inp.value = on ? '1' : '';
+    });
+  }
+})();
+</script>
+
+<%- include('../partials/footer') %>

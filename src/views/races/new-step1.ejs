@@ -1,0 +1,468 @@
+<%
+const isChamp = body.type === 'championship';
+const locked = typeof typeLocked !== 'undefined' && typeLocked && (body.type === 'club' || isChamp);
+const title = locked
+  ? (isChamp ? (t('wizard.nueva_carrera_de_resistencia')) : (t('wizard.nueva_carrera_sprint')))
+  : (t('common.nueva_carrera'));
+const passes = parseInt(body.passes, 10) || 1;
+const laneRepeat = parseInt(body.lane_repeat, 10) || 1;
+// Defaults para el form: en BD se guardan en ms, en el form en minutos/segundos.
+const minMin = body.driver_min_total_min != null ? body.driver_min_total_min : '';
+const maxMin = body.driver_max_total_min != null ? body.driver_max_total_min : '';
+const lockS  = body.driver_change_lockout_s != null ? body.driver_change_lockout_s : 120;
+const maxRuns = body.driver_max_runs != null ? body.driver_max_runs : '';
+const tirePairs = body.tire_pairs_per_team != null ? body.tire_pairs_per_team : '';
+%>
+<%- include('../partials/header', { pageTitle: title }) %>
+<div class="container container--narrow">
+
+  <%- include('../partials/wizard-progress', { current: 'type' }) %>
+
+  <div class="nr-head">
+    <% if (locked) { %>
+      <span class="nr-kind nr-kind--<%= isChamp ? 'end' : 'spr' %>">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><% if (isChamp) { %><path d="M6 2h12M6 22h12M7 2c0 5 10 6 10 10S7 17 7 22M17 2c0 5-10 6-10 10s10 5 10 10"/><% } else { %><path d="M13 2L4 14h7l-1 8 9-12h-7z"/><% } %></svg>
+      </span>
+    <% } %>
+    <div>
+      <h1 class="page-title"><%= title %></h1>
+      <p class="page-subtitle">
+        <% if (locked) { %>
+          <%= isChamp
+            ? (t('wizard.larga_duracion_por_equipos_con_turnos_de_piloto'))
+            : (t('wizard.carrera_corta_cada_piloto_corre_por_su_cuenta')) %>
+          <a class="nr-switch" href="/races/new?type=<%= isChamp ? 'club' : 'championship' %>"><%= isChamp ? (t('wizard.cambiar_a_sprint')) : (t('wizard.cambiar_a_resistencia')) %></a>
+        <% } else { %>
+          <%= t('wizard.lo_basico_de_la_carrera_los_participantes_y_los') %>
+        <% } %>
+      </p>
+    </div>
+  </div>
+
+  <% if (errors.length > 0) { %>
+    <div class="alert alert--error">
+      <% errors.forEach(e => { %><p><%= t('errors.' + e) %></p><% }) %>
+    </div>
+  <% } %>
+
+  <form action="/races/new/step1" method="POST" class="nr-form" id="nrForm" novalidate>
+
+    <% if (locked) { %>
+      <input type="hidden" name="type" value="<%= body.type %>">
+      <input type="hidden" name="type_locked" value="1">
+    <% } else { %>
+      <section class="nr-sec">
+        <h2 class="nr-sec__t"><%= t('wizard.que_carrera_quieres_crear') %></h2>
+        <div class="option-cards">
+          <label class="option-card">
+            <input type="radio" name="type" value="club" <%= body.type === 'club' ? 'checked' : '' %> required>
+            <div class="option-card__body">
+              <span class="option-card__icon"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M13 2L4 14h7l-1 8 9-12h-7z"/></svg></span>
+              <span class="option-card__title"><%= t('wizard.club_race') %></span>
+              <span class="option-card__desc"><%= t('wizard.club_race_desc') %></span>
+            </div>
+          </label>
+          <label class="option-card">
+            <input type="radio" name="type" value="championship" <%= isChamp ? 'checked' : '' %> required>
+            <div class="option-card__body">
+              <span class="option-card__icon"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 2h12M6 22h12M7 2c0 5 10 6 10 10S7 17 7 22M17 2c0 5-10 6-10 10s10 5 10 10"/></svg></span>
+              <span class="option-card__title"><%= t('wizard.championship_race') %></span>
+              <span class="option-card__desc"><%= t('wizard.championship_race_desc') %></span>
+            </div>
+          </label>
+        </div>
+      </section>
+    <% } %>
+
+    <!-- ── Nombre ─────────────────────────────────────────────────────────── -->
+    <section class="nr-sec">
+      <label class="nr-sec__t" for="name"><%= t('wizard.race_name') %></label>
+      <input class="form-input nr-name <%= errors.includes('name_required') ? 'form-input--error' : '' %>"
+             type="text" id="name" name="name" placeholder="<%= t('wizard.race_name_placeholder') %>"
+             value="<%= body.name || '' %>" autocomplete="off" autofocus required>
+    </section>
+
+    <!-- ── Circuito ───────────────────────────────────────────────────────── -->
+    <section class="nr-sec">
+      <div class="nr-sec__row">
+        <label class="nr-sec__t" for="circuitSelect"><%= t('client.common.circuito') %></label>
+        <a href="/circuits/new" class="nr-link" target="_blank">+ <%= t('wizard.nuevo_circuito') %></a>
+      </div>
+      <select id="circuitSelect" class="form-input" onchange="applyCircuit(this.value)">
+        <option value="">— <%= t('wizard.configurar_a_mano') %> —</option>
+        <% savedCircuits.forEach(c => { %>
+          <option value="<%= c.id %>" data-count="<%= c.circuits_count %>" data-config="<%= c.circuits_config %>"
+                  data-min-ms="<%= c.min_lap_ms %>" data-lanes="<%= c.lanes_count %>"
+                  <%= body.circuit_id == c.id ? 'selected' : '' %>><%= c.name %></option>
+        <% }) %>
+      </select>
+      <input type="hidden" name="circuit_id" id="circuitId" value="<%= body.circuit_id || '' %>">
+
+      <%# Con circuito guardado: lo que importa en una línea. %>
+      <div class="nr-facts" id="circuitFacts" hidden></div>
+
+      <%# Categoría (solo si el circuito tiene Pt por categoría). %>
+      <div class="nr-inline" id="categoryWrap" hidden>
+        <label class="nr-lbl" for="categorySelect"><%= t('client.common.categoria') %></label>
+        <select id="categorySelect" class="form-input form-input--sm">
+          <option value=""><%= t('common.por_defecto') %></option>
+        </select>
+        <input type="hidden" name="category_id" id="categoryId" value="<%= body.category_id || '' %>">
+      </div>
+
+      <%# A mano: nº de circuitos, carriles de cada uno y vuelta mínima. %>
+      <div class="nr-manual" id="circuitConfigGroup">
+        <div class="nr-inline">
+          <span class="nr-lbl"><%= t('common.circuitos') %></span>
+          <div class="circ-pills" id="circPills">
+            <% for (let i = 1; i <= 6; i++) { %>
+              <button type="button" class="circ-pill<%= (parseInt(body.circuits_count) || 1) === i ? ' active' : '' %>" data-n="<%= i %>"><%= i %></button>
+            <% } %>
+          </div>
+          <input type="hidden" name="circuits_count" id="circuitsCount" value="<%= body.circuits_count || 1 %>">
+        </div>
+        <div class="circuits-grid" id="circuitsGrid">
+          <% for (let i = 1; i <= 6; i++) { %>
+            <div class="circuit-cfg-row" data-idx="<%= i %>" style="<%= (parseInt(body.circuits_count) || 1) < i ? 'display:none' : '' %>">
+              <span class="circuit-num-badge" style="background:<%= ['#e63946','#2196f3','#4caf50','#ff9800','#9c27b0','#00bcd4'][i-1] %>">C<%= i %></span>
+              <input class="form-input form-input--sm <%= errors.includes('lanes_invalid') ? 'form-input--error' : '' %>"
+                     type="number" name="circuit_lanes_<%= i %>" id="circLanes_<%= i %>" min="2" max="8"
+                     value="<%= body['circuit_lanes_' + i] || (i === 1 ? 6 : 4) %>"
+                     aria-label="<%= (t('wizard.carriles_del_circuito')) + i %>">
+              <span class="form-hint"><%= t('client.common.carriles') %></span>
+            </div>
+          <% } %>
+        </div>
+        <div class="nr-inline">
+          <span class="nr-lbl"><%= t('client.common.total') %></span>
+          <strong id="totalLanesDisplay" class="nr-total"><%= body.lanes_count || 6 %></strong>
+          <span class="form-hint"><%= t('races.lanes') %></span>
+        </div>
+        <div class="nr-inline">
+          <label class="nr-lbl" for="minLapS"><%= t('common.vuelta_minima') %></label>
+          <input class="form-input form-input--sm nr-num" type="number" id="minLapS" name="min_lap_s" step="0.01" min="0" max="999"
+                 placeholder="<%= t('wizard.sin_minimo') %>" value="<%= body.min_lap_s || '' %>">
+          <span class="form-hint">s</span>
+        </div>
+      </div>
+    </section>
+
+    <!-- ── Pole ───────────────────────────────────────────────────────────── -->
+    <section class="nr-sec">
+      <span class="nr-sec__t"><%= t('common.pole_position') %></span>
+      <div class="nr-seg" role="radiogroup" aria-label="<%= t('common.pole_position') %>">
+        <label class="nr-seg__opt">
+          <input type="radio" name="has_pole" value="0" <%= (body.has_pole || '0') !== '1' ? 'checked' : '' %>>
+          <span><b><%= t('wizard.sin_pole') %></b><small><%= t('wizard.los_carriles_se_reparten_al_crear_la_tanda') %></small></span>
+        </label>
+        <label class="nr-seg__opt">
+          <input type="radio" name="has_pole" value="1" <%= body.has_pole === '1' ? 'checked' : '' %>>
+          <span><b><%= t('wizard.con_pole') %></b><small><%= t('wizard.el_mas_rapido_elige_carril_primero') %></small></span>
+        </label>
+      </div>
+    </section>
+
+    <!-- ── Categoría y coche por participante (opcional) ──────────────────── -->
+    <section class="nr-sec">
+      <span class="nr-sec__t"><%= t('common.categoria_y_coche_opcional') %></span>
+      <p class="nr-help"><%= t('wizard.al_activarlos_al_inscribir_cada_equipo_o_piloto') %></p>
+      <div class="nr-seg">
+        <label class="nr-seg__opt">
+          <input type="checkbox" name="has_categoria" value="1" <%= body.has_categoria === '1' ? 'checked' : '' %>>
+          <span><b><%= t('common.categoria_copa') %></b><small><%= t('wizard.se_ve_junto_al_nombre_en_el_directo_y_sale_en') %></small></span>
+        </label>
+        <label class="nr-seg__opt">
+          <input type="checkbox" name="has_coche" value="1" <%= body.has_coche === '1' ? 'checked' : '' %>>
+          <span><b><%= t('common.coche') %></b><small><%= t('wizard.columna_en_el_excel_de_resultados') %></small></span>
+        </label>
+      </div>
+    </section>
+
+    <!-- ── Resistencia: turnos y neumáticos ───────────────────────────────── -->
+    <section class="nr-sec" id="champSection" <%= isChamp ? '' : 'hidden' %>>
+      <span class="nr-sec__t"><%= t('wizard.reglas_de_resistencia') %></span>
+      <p class="nr-help"><%= t('wizard.deja_en_blanco_lo_que_no_quieras_controlar_cada') %></p>
+      <div class="nr-grid">
+        <label class="nr-field">
+          <span class="nr-lbl"><%= t('wizard.minimo_por_piloto') %></span>
+          <span class="nr-unit"><input class="form-input form-input--sm" type="number" id="driverMinMin" name="driver_min_total_min" min="0" max="600" step="1" placeholder="—" value="<%= minMin %>"><span>min</span></span>
+        </label>
+        <label class="nr-field">
+          <span class="nr-lbl"><%= t('wizard.maximo_por_piloto') %></span>
+          <span class="nr-unit"><input class="form-input form-input--sm" type="number" id="driverMaxMin" name="driver_max_total_min" min="0" max="600" step="1" placeholder="—" value="<%= maxMin %>"><span>min</span></span>
+        </label>
+        <label class="nr-field">
+          <span class="nr-lbl"><%= t('wizard.maximo_de_turnos') %></span>
+          <span class="nr-unit"><input class="form-input form-input--sm" type="number" id="driverMaxRuns" name="driver_max_runs" min="0" max="100" step="1" placeholder="—" value="<%= maxRuns %>"><span><%= t('wizard.por_piloto') %></span></span>
+        </label>
+        <label class="nr-field">
+          <span class="nr-lbl"><%= t('common.neumaticos') %></span>
+          <span class="nr-unit"><input class="form-input form-input--sm" type="number" id="tirePairs" name="tire_pairs_per_team" min="0" max="99" step="1" placeholder="—" value="<%= tirePairs %>"><span><%= t('common.pares_por_equipo') %></span></span>
+        </label>
+        <label class="nr-field">
+          <span class="nr-lbl"><%= t('wizard.sin_cambios_al_final') %></span>
+          <span class="nr-unit"><input class="form-input form-input--sm" type="number" id="lockoutS" name="driver_change_lockout_s" min="0" max="600" step="1" value="<%= lockS %>"><span><%= t('wizard.s_de_cada_manga') %></span></span>
+        </label>
+      </div>
+    </section>
+
+    <!-- ── Más opciones ───────────────────────────────────────────────────── -->
+    <details class="nr-sec nr-more" <%= (passes > 1 || laneRepeat > 1) ? 'open' : '' %>>
+      <summary><span class="nr-sec__t"><%= t('common.mas_opciones') %></span><span class="nr-help" id="moreSummary"></span></summary>
+      <div class="nr-grid">
+        <label class="nr-field">
+          <span class="nr-lbl"><%= t('common.pasadas') %></span>
+          <input class="form-input form-input--sm nr-num" type="number" id="passes" name="passes" min="1" step="1" value="<%= passes %>">
+          <small class="nr-help"><%= t('wizard.veces_que_se_corre_la_rotacion_completa_de') %></small>
+        </label>
+        <label class="nr-field">
+          <span class="nr-lbl"><%= t('common.repetir_carril') %></span>
+          <input class="form-input form-input--sm nr-num" type="number" id="laneRepeat" name="lane_repeat" min="1" step="1" value="<%= laneRepeat %>">
+          <small class="nr-help"><%= t('wizard.mangas_seguidas_en_el_mismo_carril_las_vueltas') %></small>
+        </label>
+      </div>
+    </details>
+
+    <div class="nr-bar">
+      <a href="/races" class="btn btn--ghost"><%= t('wizard.back') %></a>
+      <div class="nr-bar__sum" id="nrSummary" aria-live="polite"></div>
+      <button type="submit" class="btn btn--primary"><%= t('wizard.next') %> →</button>
+    </div>
+  </form>
+</div>
+
+<script>
+const circPills    = document.getElementById('circPills');
+const circCount    = document.getElementById('circuitsCount');
+const circGrid     = document.getElementById('circuitsGrid');
+const totalDisplay = document.getElementById('totalLanesDisplay');
+const circuitIdEl  = document.getElementById('circuitId');
+const minLapInput  = document.getElementById('minLapS');
+const manualBox    = document.getElementById('circuitConfigGroup');
+const factsEl      = document.getElementById('circuitFacts');
+const categoryWrap   = document.getElementById('categoryWrap');
+const categorySelect = document.getElementById('categorySelect');
+const categoryIdEl   = document.getElementById('categoryId');
+// Map<circuitId, [{ category_id, category_name, min_lap_ms }]>
+const CIRCUIT_CATEGORY_TIMES = <%- JSON.stringify(circuitCategoryTimes || {}) %>;
+
+const fmtS = (ms) => (ms / 1000).toFixed(2).replace('.', I18N.t('client.wizard.txt')) + ' s';
+function getActiveCount() { return parseInt(circCount.value, 10); }
+
+function updateTotal() {
+  let total = 0;
+  for (let i = 1; i <= getActiveCount(); i++) {
+    total += parseInt(document.getElementById('circLanes_' + i)?.value || 0, 10) || 0;
+  }
+  totalDisplay.textContent = total;
+}
+
+function setCircuitCount(n) {
+  circCount.value = n;
+  circPills.querySelectorAll('.circ-pill').forEach(btn => btn.classList.toggle('active', parseInt(btn.dataset.n) === n));
+  circGrid.querySelectorAll('.circuit-cfg-row').forEach(row => { row.style.display = parseInt(row.dataset.idx) <= n ? '' : 'none'; });
+  updateTotal();
+}
+
+// Lo que se toma del circuito guardado, en una línea (sustituye a la
+// configuración a mano, que se oculta).
+function renderFacts(opt) {
+  const config = JSON.parse(opt.dataset.config || '[]');
+  const lanes = parseInt(opt.dataset.lanes, 10) || config.reduce((a, b) => a + b, 0);
+  const minMs = parseInt(minLapInput.value * 1000, 10) || 0;
+  const parts = [`<b>${lanes}</b> ${I18N.t('client.common.carriles')}`];
+  if (config.length > 1) parts.push(`${config.length} ${I18N.t('client.wizard.circuitos')} (${config.join(' + ')})`);
+  parts.push(minMs > 0 ? `${I18N.t('client.wizard.vuelta_minima')} <b>${fmtS(minMs)}</b>` : (I18N.t('client.wizard.sin_vuelta_minima')));
+  factsEl.innerHTML = parts.join('<span class="nr-dot">·</span>');
+}
+
+function applyCircuit(id) {
+  const opt = document.querySelector(`#circuitSelect option[value="${id}"]`);
+  circuitIdEl.value = id || '';
+  if (!id || !opt) {
+    manualBox.hidden = false;
+    factsEl.hidden = true;
+    populateCategories(null);
+    refreshSummary();
+    return;
+  }
+  setCircuitCount(parseInt(opt.dataset.count, 10));
+  JSON.parse(opt.dataset.config || '[]').forEach((lanes, i) => {
+    const inp = document.getElementById('circLanes_' + (i + 1));
+    if (inp) inp.value = lanes;
+  });
+  updateTotal();
+  const minMs = parseInt(opt.dataset.minMs, 10) || 0;
+  // Punto, NO coma: el campo es <input type="number"> y el navegador exige el
+  // formato inglés en `value`. Cambiarlo a coma deja el campo vacío.
+  minLapInput.value = minMs > 0 ? (minMs / 1000).toFixed(2) : '';
+  manualBox.hidden = true;
+  factsEl.hidden = false;
+  populateCategories(id);
+  renderFacts(opt);
+  refreshSummary();
+}
+
+// Selector de categoría solo si el circuito tiene Pt por categoría.
+function populateCategories(circuitId) {
+  while (categorySelect.options.length > 1) categorySelect.remove(1);
+  const list = circuitId ? (CIRCUIT_CATEGORY_TIMES[circuitId] || []) : [];
+  if (!list.length) { categoryWrap.hidden = true; categoryIdEl.value = ''; return; }
+  for (const cat of list) {
+    const o = document.createElement('option');
+    o.value = cat.category_id;
+    o.textContent = `${cat.category_name} (${fmtS(cat.min_lap_ms)})`;
+    o.dataset.minMs = cat.min_lap_ms;
+    if (String(categoryIdEl.value) === String(cat.category_id)) o.selected = true;
+    categorySelect.appendChild(o);
+  }
+  categoryWrap.hidden = false;
+  applyCategoryFromSelect();
+}
+
+function applyCategoryFromSelect() {
+  const o = categorySelect.selectedOptions[0];
+  const id = o && o.value ? o.value : '';
+  categoryIdEl.value = id;
+  const cOpt = document.querySelector(`#circuitSelect option[value="${circuitIdEl.value}"]`);
+  const ms = id ? (parseInt(o.dataset.minMs, 10) || 0) : (cOpt ? (parseInt(cOpt.dataset.minMs, 10) || 0) : 0);
+  minLapInput.value = ms > 0 ? (ms / 1000).toFixed(2) : '';
+  if (cOpt) renderFacts(cOpt);
+}
+categorySelect.addEventListener('change', applyCategoryFromSelect);
+
+// Solo sin tipo fijado: las reglas de resistencia siguen al tipo elegido.
+document.querySelectorAll('input[type="radio"][name="type"]').forEach(r => {
+  r.addEventListener('change', () => {
+    document.getElementById('champSection').hidden = currentType() !== 'championship';
+  });
+});
+function currentType() {
+  const el = document.querySelector('input[name="type"]:checked') || document.querySelector('input[type="hidden"][name="type"]');
+  return el ? el.value : null;
+}
+
+circPills.addEventListener('click', e => {
+  const btn = e.target.closest('.circ-pill');
+  if (btn) setCircuitCount(parseInt(btn.dataset.n));
+  refreshSummary();
+});
+circGrid.addEventListener('input', updateTotal);
+
+// ── Resumen de la barra inferior + validación antes de enviar ───────────────
+const esc = (s) => s.replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+function refreshSummary() {
+  const name   = document.getElementById('name').value.trim();
+  const type   = currentType();
+  const pole   = document.querySelector('input[name="has_pole"]:checked')?.value === '1';
+  const lanes  = parseInt(totalDisplay.textContent, 10) || 0;
+  const passes = parseInt(document.getElementById('passes').value, 10) || 1;
+  const rep    = parseInt(document.getElementById('laneRepeat').value, 10) || 1;
+  const parts = [name ? `<b>${esc(name)}</b>` : (I18N.t('client.wizard.i_sin_nombre_i'))];
+  if (type) parts.push(type === 'championship' ? (I18N.t('client.common.resistencia')) : 'Sprint');
+  parts.push(`${lanes} ${I18N.t('client.common.carriles')}`);
+  parts.push(pole ? (I18N.t('client.wizard.con_pole')) : (I18N.t('client.wizard.sin_pole')));
+  const more = [];
+  if (passes > 1) more.push(`${passes} ${I18N.t('client.wizard.pasadas')}`);
+  if (rep > 1) more.push(`${I18N.t('client.wizard.carril')}${rep}`);
+  document.getElementById('moreSummary').textContent = more.join(' · ');
+  document.getElementById('nrSummary').innerHTML = parts.concat(more).join(' · ');
+}
+document.getElementById('nrForm').addEventListener('input', refreshSummary);
+document.getElementById('nrForm').addEventListener('change', refreshSummary);
+
+document.getElementById('nrForm').addEventListener('submit', (e) => {
+  const problems = [];
+  const nameEl = document.getElementById('name');
+  if (!nameEl.value.trim()) problems.push([nameEl, I18N.t('client.wizard.ponle_un_nombre_a_la_carrera')]);
+  if (!currentType()) problems.push([document.querySelector('input[name="type"]'), I18N.t('client.wizard.elige_el_tipo_de_carrera')]);
+  if (!circuitIdEl.value) {
+    for (let i = 1; i <= getActiveCount(); i++) {
+      const inp = document.getElementById('circLanes_' + i);
+      const v = parseInt(inp.value, 10);
+      if (!(v >= 2 && v <= 8)) { problems.push([inp, I18N.t('client.wizard.el_circuito_i_debe_tener_entre_2_y_8_carriles', { i: i })]); break; }
+    }
+  }
+  document.querySelectorAll('.nr-err').forEach(el => el.remove());
+  document.querySelectorAll('.form-input--error').forEach(el => el.classList.remove('form-input--error'));
+  if (!problems.length) return;
+  e.preventDefault();
+  problems.forEach(([el, msg]) => {
+    if (el.classList.contains('form-input')) el.classList.add('form-input--error');
+    const p = document.createElement('p');
+    p.className = 'nr-err';
+    p.textContent = msg;
+    (el.closest('.nr-sec') || el.parentElement).appendChild(p);
+  });
+  const first = problems[0][0];
+  first.scrollIntoView({ behavior: 'smooth', block: 'center' });
+  if (first.focus) first.focus({ preventScroll: true });
+});
+
+// Init: con circuito (preseleccionado o al volver de un error) se aplica.
+if (circuitIdEl.value) {
+  document.getElementById('circuitSelect').value = circuitIdEl.value;
+  applyCircuit(circuitIdEl.value);
+} else {
+  updateTotal();
+}
+refreshSummary();
+</script>
+
+<style>
+  .nr-head { display: flex; align-items: flex-start; gap: 14px; }
+  .nr-kind { flex: none; width: 46px; height: 46px; margin-top: 4px; border-radius: 12px; display: grid; place-items: center; }
+  .nr-kind svg { width: 24px; height: 24px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
+  .nr-kind--spr { background: rgba(239,70,81,.14); color: #ff7a83; }
+  .nr-kind--end { background: rgba(249,115,22,.14); color: #fb923c; }
+  .nr-switch { margin-left: 6px; font-size: 13px; color: #58a6ff; white-space: nowrap; }
+  .nr-form { display: flex; flex-direction: column; gap: 14px; margin-top: 18px; }
+  .nr-sec { border: 1px solid var(--border, #30363d); border-radius: 14px; background: var(--bg-card, #0d1117); padding: 16px 18px; display: grid; gap: 12px; }
+  .nr-sec[hidden] { display: none; }
+  .nr-sec__row { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; }
+  .nr-sec__t { display: block; margin: 0; font-family: 'Saira Condensed', sans-serif; font-weight: 700; font-size: 15px;
+               letter-spacing: .12em; text-transform: uppercase; color: var(--text, #e6edf3); }
+  .nr-link { font-size: 13px; color: #58a6ff; }
+  .nr-name { font-size: 18px; padding: 12px 14px; }
+  .nr-help { margin: 0; font-size: 13px; color: var(--text-muted, #8b949e); }
+  .nr-lbl { font-size: 13px; color: var(--text-muted, #8b949e); }
+  .nr-inline { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+  .nr-inline[hidden] { display: none; }
+  .nr-manual { display: grid; gap: 12px; padding-top: 4px; }
+  .nr-manual[hidden] { display: none; }
+  .nr-num { width: 6.5rem; }
+  .nr-total { color: #58a6ff; font-size: 18px; }
+  .nr-facts { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; font-size: 14px; color: var(--text-muted, #8b949e);
+              padding: 10px 12px; border-radius: 10px; background: rgba(88,166,255,.06); border: 1px solid rgba(88,166,255,.18); }
+  .nr-facts[hidden] { display: none; }
+  .nr-facts b { color: var(--text, #e6edf3); }
+  .nr-dot { color: #484f58; margin: 0 2px; }
+  .nr-seg { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 10px; }
+  .nr-seg__opt { position: relative; display: block; cursor: pointer; }
+  .nr-seg__opt input { position: absolute; opacity: 0; pointer-events: none; }
+  .nr-seg__opt > span { display: grid; gap: 2px; padding: 11px 14px; border-radius: 10px; border: 1.5px solid var(--border, #30363d); background: #0a0d12; transition: border-color .15s, background .15s; }
+  .nr-seg__opt b { color: var(--text, #e6edf3); font-size: 14.5px; }
+  .nr-seg__opt small { color: var(--text-muted, #8b949e); font-size: 12.5px; }
+  .nr-seg__opt:hover > span { border-color: #484f58; }
+  .nr-seg__opt input:checked + span { border-color: #e63946; background: rgba(230,57,70,.08); }
+  .nr-seg__opt input:focus-visible + span { outline: 2px solid #58a6ff; outline-offset: 2px; }
+  .nr-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(190px, 1fr)); gap: 12px 16px; }
+  .nr-field { display: grid; gap: 5px; align-content: start; }
+  .nr-unit { display: flex; align-items: center; gap: 8px; }
+  .nr-unit input { width: 5.5rem; }
+  .nr-unit span { font-size: 13px; color: var(--text-muted, #8b949e); }
+  .nr-more summary { display: flex; align-items: baseline; gap: 12px; cursor: pointer; list-style: none; }
+  .nr-more summary::-webkit-details-marker { display: none; }
+  .nr-more summary .nr-sec__t::before { content: '▸'; display: inline-block; margin-right: 8px; transition: transform .15s; }
+  .nr-more[open] summary .nr-sec__t::before { transform: rotate(90deg); }
+  .nr-more:not([open]) { gap: 0; }
+  .nr-sec .option-card__icon svg { width: 26px; height: 26px; fill: none; stroke: currentColor; stroke-width: 1.7; stroke-linecap: round; stroke-linejoin: round; }
+  .nr-err { margin: 0; font-size: .82rem; color: #ff8a92; }
+  .nr-bar { position: sticky; bottom: 0; z-index: 5; display: flex; align-items: center; gap: 14px; flex-wrap: wrap;
+            padding: 22px 0 12px; background: linear-gradient(180deg, rgba(0,0,0,0), var(--bg, #000) 14px); }
+  .nr-bar__sum { flex: 1; min-width: 200px; font-size: 14px; color: var(--text-muted, #8b949e); }
+  .nr-bar__sum b { color: var(--text, #e6edf3); font-weight: 600; }
+  @media (prefers-reduced-motion: reduce) { .nr-seg__opt > span, .nr-more summary .nr-sec__t::before { transition: none; } }
+</style>
+
+<%- include('../partials/footer') %>

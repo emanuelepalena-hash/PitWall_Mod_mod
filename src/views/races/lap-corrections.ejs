@@ -1,0 +1,936 @@
+<%- include('../partials/header', { pageTitle: (t('common.correccion_de_vueltas')) }) %>
+
+<%
+function fmtMs(ms) {
+  if (ms == null) return '—';
+  const totalSec   = Math.floor(ms / 1000);
+  const hundredths = Math.floor((ms % 1000) / 10);
+  const secs = totalSec % 60;
+  const mins = Math.floor(totalSec / 60);
+  return (mins > 0 ? mins + ':' : '') + String(secs).padStart(mins > 0 ? 2 : 1, '0') + '.' + String(hundredths).padStart(2, '0');
+}
+function fmtS(ms) {
+  if (ms == null) return '—';
+  return (ms / 1000).toFixed(3);
+}
+
+// Cuenta total de vueltas "marcadas" (ghost) en toda la manga
+const totalFlagged = laneGroups.reduce((acc, g) => acc + g.laps.filter(l => l.is_ghost).length, 0);
+
+// Vueltas REPUESTAS: la caja DS las contó pero PitWall no las vio (cable fuera,
+// proceso caído). Se rellenaron con la media del carril, así que su tiempo es
+// una estimación. Hay que poder localizarlas para corregirlas o borrarlas a
+// mano: si un coche se paró en pista durante el corte, se habrán repuesto más
+// vueltas de las que dio. Distintas de las de FINAL DE BANDERA (is_flag_lap):
+// esas no vienen de una caída, sino del cruce que completó justo al caer la
+// bandera: con su tiempo real si la trama llegó dentro de la ventana tras el
+// fin; con la media del carril (is_estimated) si hubo que reponerla por contador.
+const totalEstimated = laneGroups.reduce((acc, g) => acc + g.laps.filter(l => l.is_estimated && !l.is_flag_lap && !l.is_ghost).length, 0);
+const totalFlagLap    = laneGroups.reduce((acc, g) => acc + g.laps.filter(l => l.is_flag_lap && !l.is_ghost).length, 0);
+
+// Stats por carril para la sidebar
+const laneStats = laneGroups.map(g => {
+  const valid     = g.laps.filter(l => !l.is_ghost);
+  const flags     = g.laps.filter(l =>  l.is_ghost).length;
+  // Media de carril de ESA manga = media SIMPLE de tiempos, SIN fantasmas ni la
+  // vuelta de salida (warmup). Incluye salidas de pista (= media de carril de
+  // TicTac, misma fórmula que el directo/Le Mans/resultados).
+  const forAvg    = g.laps.filter(l => !l.is_ghost && !l.is_warmup);
+  const avgMs     = forAvg.length ? Math.round(forAvg.reduce((s,l) => s + l.lap_time_ms, 0) / forAvg.length) : null;
+  // Mejor vuelta = mínimo de vueltas de carrera: sin fantasma, sin la de salida
+  // (warmup) y sin salidas de pista, y nunca la vuelta 1 (cruce de salida).
+  const forBest   = g.laps.filter(l => !l.is_ghost && !l.is_warmup && !l.is_exit && l.lap_number > 1);
+  const bestMs    = forBest.length ? Math.min(...forBest.map(l => l.lap_time_ms)) : null;
+  // Vueltas repuestas en este carril: las que hay que revisar a mano.
+  const estCount     = g.laps.filter(l => l.is_estimated && !l.is_flag_lap && !l.is_ghost).length;
+  const flagLapCount = g.laps.filter(l => l.is_flag_lap && !l.is_ghost).length;
+  return {
+    info: g.info,
+    laps: g.laps,
+    validCount: valid.length,
+    flagCount:  flags,
+    estCount,
+    flagLapCount,
+    avgMs, bestMs,
+    entityName: g.info.team_name || g.info.driver_name || ('Lane ' + g.info.lane),
+  };
+});
+
+// Carril inicial activo: el primero con ghost laps si lo hay; si no, el primero
+let initActive = 0;
+const firstFlagged = laneStats.findIndex(s => s.flagCount > 0);
+if (firstFlagged >= 0) initActive = firstFlagged;
+%>
+
+<div class="vt-page vt-page--corrections">
+  <div class="lc-shell">
+
+    <!-- ── TOPBAR ──────────────────────────────────────────────────── -->
+    <div class="lc-topbar">
+      <div class="lc-title">
+        <div class="lc-title__icon">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M14.5 4.5l5 5M3 21l1-5L16 4l4 4L8 20l-5 1z"/></svg>
+        </div>
+        <div>
+          <h1><%= t('common.correccion_de_vueltas_2') %></h1>
+          <div class="lc-title__sub">
+            <%= race.name %>
+            <% if (tanda) { %> · <%= t('common.tanda_2') %> <b><%= tanda.number %></b><% } %>
+            · <%= t('common.manga') %> <b><%= manga.number %></b>
+          </div>
+        </div>
+      </div>
+
+      <% if (totalFlagged > 0) { %>
+        <span class="lc-meta-pill">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" style="width:14px;height:14px"><path d="M10.3 3.8 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.8a2 2 0 0 0-3.4 0z"/><path d="M12 9v4M12 17h.01"/></svg>
+          <b><%= totalFlagged %></b> <%= t('lap-corrections.vueltas_fantasma') %>
+        </span>
+      <% } %>
+
+      <% if (totalEstimated > 0) { %>
+        <span class="lc-meta-pill" style="color:#c792ea;border-color:rgba(199,146,234,.35)"
+              title="<%= t('lap-corrections.la_caja_ds_las_conto_pero_pitwall_no_las_vio') %>">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" style="width:14px;height:14px"><circle cx="12" cy="12" r="9"/><path d="M12 8v5M12 16h.01"/></svg>
+          <b><%= totalEstimated %></b> <%= t('lap-corrections.vueltas_repuestas_estimadas') %>
+        </span>
+      <% } %>
+
+      <% if (totalFlagLap > 0) { %>
+        <span class="lc-meta-pill" style="color:#58a6ff;border-color:rgba(88,166,255,.35)"
+              title="<%= t('lap-corrections.el_cruce_que_completo_justo_al_caer_la_bandera') %>">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" style="width:14px;height:14px"><path d="M4 21V4M4 4h13l-2.5 4L17 12H4"/></svg>
+          <b><%= totalFlagLap %></b> <%= t('lap-corrections.vueltas_de_final_de_bandera') %>
+        </span>
+      <% } %>
+
+      <div class="lc-tools">
+        <% if (typeof mangaOptions !== 'undefined' && mangaOptions.length > 1) { %>
+          <select class="lc-mini-select" style="min-width:170px"
+                  title="<%= t('lap-corrections.elegir_manga_a_corregir') %>"
+                  onchange="if (this.value) location.href = '/races/<%= race.id %>/mangas/' + this.value + '/corrections';">
+            <% mangaOptions.forEach(function (mo) { %>
+              <option value="<%= mo.id %>" <%= mo.id === manga.id ? 'selected' : '' %>><%=
+                (t('lap-corrections.t')) + mo.tandaNumber + ' · ' + (t('client.common.manga')) + mo.number + (mo.status === 'active' ? ' ●' : '')
+              %></option>
+            <% }); %>
+          </select>
+        <% } %>
+        <a href="/races/<%= race.id %>/mangas/<%= manga.id %>/live" class="vt-btn vt-btn--ghost vt-btn--sm">
+          <svg viewBox="0 0 24 24"><path d="M19 12H5M12 19l-7-7 7-7"/></svg>
+          <%= t('common.volver') %>
+        </a>
+      </div>
+    </div>
+
+    <% if (laneGroups.length === 0) { %>
+      <div class="lc-empty">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M8 9h8M8 13h8M8 17h5"/></svg>
+        <div class="lc-empty__t"><%= t('lap-corrections.sin_carriles_activos') %></div>
+      </div>
+    <% } else { %>
+
+      <div class="lc-main">
+
+        <!-- ── LISTA DE CARRILES ─────────────────────────────────────── -->
+        <aside class="lc-lanes">
+          <div class="lc-lanes__h"><%= t('lap-corrections.carriles_de_la_manga') %></div>
+          <% laneStats.forEach((s, idx) => {
+               const color = LANE_COLORS[s.info.lane - 1] || '#8b949e';
+               const active = idx === initActive;
+          %>
+            <div class="lc-lane <%= active ? 'is-active' : '' %>"
+                 data-idx="<%= idx %>"
+                 data-lane="<%= s.info.lane %>"
+                 style="--lane-color:<%= color %>">
+              <span class="lc-lane__chip"><%= s.info.lane %></span>
+              <span class="lc-lane__meta">
+                <span class="lc-lane__name"><%= s.entityName %></span>
+                <span class="lc-lane__sub">
+                  <%= s.validCount %> <%= t('common.vueltas') %>
+                  <% if (s.bestMs) { %> · <%= t('common.mejor') %> <%= fmtS(s.bestMs) %>s<% } %>
+                </span>
+              </span>
+              <% if (s.flagCount > 0) { %>
+                <span class="lc-lane__warn"><%= s.flagCount %>⚠</span>
+              <% } %>
+            </div>
+          <% }) %>
+        </aside>
+
+        <!-- ── DETALLE (vuelta a vuelta) ─────────────────────────────── -->
+        <section class="lc-detail">
+          <% laneStats.forEach((s, idx) => {
+               const color = LANE_COLORS[s.info.lane - 1] || '#8b949e';
+               // Vuelta más rápida (no ghost) — la marcamos como FL
+               let fastestId = null, fastestMs = Infinity;
+               s.laps.forEach(l => {
+                 if (!l.is_ghost && !l.is_exit && l.lap_time_ms > 500 && l.lap_time_ms < fastestMs) {
+                   fastestMs = l.lap_time_ms; fastestId = l.id;
+                 }
+               });
+               const otherLanes = activeLanes.filter(l => l !== s.info.lane);
+          %>
+            <div class="lc-detail__pane <%= idx === initActive ? 'is-active' : '' %>"
+                 data-idx="<%= idx %>" style="--lane-color:<%= color %>">
+
+              <!-- Header del carril -->
+              <div class="lc-detail__head">
+                <div class="lc-detail__chip"><%= s.info.lane %></div>
+                <div>
+                  <div class="lc-detail__name"><%= s.entityName %></div>
+                  <div class="lc-detail__sub">
+                    <%= t('client.common.carril') %> <%= s.info.lane %>
+                    · <%= s.laps.length %> <%= t('lap-corrections.vueltas_registradas') %>
+                    <% if (s.estCount > 0) { %>
+                      · <span class="lc-est-count">
+                          <%= s.estCount %> <%= t('lap-corrections.repuestas') %>
+                        </span>
+                    <% } %>
+                    <% if (s.flagLapCount > 0) { %>
+                      · <span class="lc-flaglap-count">
+                          <%= s.flagLapCount %> <%= t('lap-corrections.bandera') %>
+                        </span>
+                    <% } %>
+                  </div>
+                </div>
+                <div class="lc-kpis">
+                  <div class="lc-kpi">
+                    <div class="lc-kpi__l"><%= t('client.common.vueltas') %></div>
+                    <div class="lc-kpi__v"><%= s.validCount %></div>
+                  </div>
+                  <div class="lc-kpi">
+                    <div class="lc-kpi__l"><%= t('client.common.mejor') %></div>
+                    <div class="lc-kpi__v lc-kpi__v--best"><%= s.bestMs ? fmtS(s.bestMs) : '—' %></div>
+                  </div>
+                  <div class="lc-kpi">
+                    <div class="lc-kpi__l"><%= t('client.common.media') %></div>
+                    <div class="lc-kpi__v"><%= s.avgMs ? fmtS(s.avgMs) : '—' %></div>
+                  </div>
+                </div>
+              </div>
+
+              <!-- Tabla vuelta a vuelta -->
+              <div class="lc-laps">
+                <div class="lc-laps__bar">
+                  <span class="lc-laps__lbl"><%= t('lap-corrections.vuelta_a_vuelta') %></span>
+                  <% if (manualComa && manga.status === 'finished') { %>
+                    <!-- Corrección manual de la coma (Ajustes → Preferencias). Solo
+                         mangas cerradas: en una viva la reescribe stopManga. -->
+                    <% const comaAuto = Number(s.info.coma || 0); %>
+                    <% const comaAutoTxt = comaAuto.toFixed(2).replace('.', ','); %>
+                    <div class="lc-coma">
+                      <span class="lc-coma__lbl"
+                            title="<%= decidesTie[s.info.lane] === false
+                              ? (t('lap-corrections.esta_manga_no_es_la_ultima_que_corrio_esta_2'))
+                              : (t('lap-corrections.fraccion_de_vuelta_al_caer_la_bandera_de_esta')) %>"><%= t('lap-corrections.coma') %></span>
+                      <form class="lc-coma__form" action="/races/<%= race.id %>/mangas/<%= manga.id %>/corrections/coma" method="POST">
+                        <input type="hidden" name="lane" value="<%= s.info.lane %>">
+                        <input class="lc-mini-input lc-mini-input--coma" type="text" inputmode="decimal" name="coma"
+                               value="<%= s.info.coma_manual != null ? String(Number(s.info.coma_manual)).replace('.', ',') : '' %>"
+                               placeholder="<%= comaAutoTxt %>"
+                               title="<%= t('lap-corrections.fraccion_de_vuelta_al_caer_la_bandera_de_0_a_0') %>">
+                        <button class="lc-iconbtn" type="submit" title="<%= t('lap-corrections.guardar_coma') %>">
+                          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg>
+                        </button>
+                      </form>
+                      <% if (s.info.coma_manual != null) { %>
+                        <form class="lc-coma__reset" action="/races/<%= race.id %>/mangas/<%= manga.id %>/corrections/coma" method="POST">
+                          <input type="hidden" name="lane" value="<%= s.info.lane %>">
+                          <input type="hidden" name="coma" value="">
+                          <button class="lc-iconbtn" type="submit" title="<%= t('lap-corrections.volver_a_la_coma_automatica') %>">
+                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12a9 9 0 1 0 3-6.7"/><path d="M3 4v5h5"/></svg>
+                          </button>
+                        </form>
+                        <span class="lc-coma__tag is-manual" title="<%= t('lap-corrections.corregida_a_mano_automatica') %><%= comaAutoTxt %>">
+                          <%= t('lap-corrections.a_mano') %>
+                        </span>
+                      <% } else { %>
+                        <span class="lc-coma__tag" title="<%= t('lap-corrections.calculada_automaticamente_al_cerrar_la_manga') %>">
+                          <%= t('lap-corrections.automatica') %>
+                        </span>
+                      <% } %>
+                      <% if (decidesTie[s.info.lane] === false) { %>
+                        <span class="lc-coma__tag is-note"
+                              title="<%= t('lap-corrections.esta_manga_no_es_la_ultima_que_corrio_esta') %>">
+                          <%= t('lap-corrections.no_decide') %>
+                        </span>
+                      <% } %>
+                    </div>
+                  <% } %>
+                </div>
+
+                <% if (s.laps.length === 0) { %>
+                  <p class="lc-laps__empty"><%= t('lap-corrections.sin_vueltas_registradas_en_este_carril') %></p>
+                <% } else { %>
+                  <div class="lc-lhead">
+                    <div><%= t('lap-corrections.vlt') %></div>
+                    <div><%= t('common.tiempo') %></div>
+                    <div class="r"><%= t('lap-corrections.reloj') %></div>
+                    <div class="r"><%= t('lap-corrections.delta_ant') %></div>
+                    <div class="r"><%= t('common.acciones') %></div>
+                  </div>
+
+                  <% s.laps.forEach((lap, i) => {
+                       const prev = i > 0 ? s.laps[i-1].lap_time_ms : null;
+                       const delta = prev != null ? (lap.lap_time_ms - prev) : null;
+                       const dCls = delta == null ? 'zero' : (delta < 0 ? 'up' : 'dn');
+                       const dTxt = delta == null ? '—' : (delta > 0 ? '+' : '') + (delta/1000).toFixed(3);
+                       const isFastest = lap.id === fastestId;
+                       const flagClass = lap.is_ghost ? 'is-flag' : '';
+                       const fastClass = isFastest ? 'is-fastest' : '';
+                       // Vuelta que PitWall no vio: la caja SÍ la contó y se repuso con
+                       // la media del carril. Su tiempo es una estimación, no un cruce
+                       // real, así que hay que poder encontrarla para corregirla a mano.
+                       // `is_flag_lap` la distingue del caso de caída de conexión: es
+                       // el cruce que completó justo al caer la bandera.
+                       const estClass = (lap.is_estimated && !lap.is_flag_lap && !lap.is_ghost) ? 'is-estimated' : '';
+                       const flagLapClass = (lap.is_flag_lap && !lap.is_ghost) ? 'is-flaglap' : '';
+                  %>
+                    <div class="lc-lap <%= flagClass %> <%= fastClass %> <%= estClass %> <%= flagLapClass %>">
+                      <div class="lc-lap__n">
+                        <%= lap.lap_number %>
+                        <% if (isFastest) { %><span class="lc-lap__fl">FL</span><% } %>
+                      </div>
+                      <div class="lc-lap__time">
+                        <%= fmtS(lap.lap_time_ms) %>s
+                        <% if (lap.is_ghost) { %>
+                          <span class="lc-flagtag">
+                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10.3 3.8 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.8a2 2 0 0 0-3.4 0z"/><path d="M12 9v4M12 17h.01"/></svg>
+                            <% if (lap.transferred_to_lane) { %>
+                              <%= t('lap-corrections.movida_a_c') %><%= lap.transferred_to_lane %>
+                            <% } else if (lap.ghost_from_lane) { %>
+                              <%= t('lap-corrections.desde_c') %><%= lap.ghost_from_lane %>
+                            <% } else { %>
+                              <%= t('lap-corrections.fantasma') %>
+                            <% } %>
+                          </span>
+                        <% } else if (lap.is_flag_lap) { %>
+                          <span class="lc-flagtag is-flaglap"
+                                title="<%= lap.is_estimated ? t('lap-corrections.flag_estimada') : t('lap-corrections.flag_real') %>">
+                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 21V4M4 4h13l-2.5 4L17 12H4"/></svg>
+                            <%= t('lap-corrections.final_de_bandera') %>
+                          </span>
+                        <% } else if (lap.is_estimated) { %>
+                          <span class="lc-flagtag is-est"
+                                title="<%= t('lap-corrections.la_caja_ds_conto_esta_vuelta_pero_pitwall_no_la') %>">
+                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="9"/><path d="M12 8v5M12 16h.01"/></svg>
+                            <%= t('lap-corrections.estimada') %>
+                          </span>
+                        <% } else if (lap.transferred_from_lane) { %>
+                          <span class="lc-flagtag is-info">
+                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M7 16l-4-4 4-4M3 12h18M17 8l4 4-4 4"/></svg>
+                            <%= t('lap-corrections.desde_c') %><%= lap.transferred_from_lane %>
+                          </span>
+                        <% } else if (lap.is_pit_stop) { %>
+                          <span class="lc-flagtag is-pit"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/></svg> Pit</span>
+                        <% } else if (lap.is_exit) { %>
+                          <span class="lc-flagtag is-exit"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M10.3 3.8 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.8a2 2 0 0 0-3.4 0z"/></svg> <%= t('lap-corrections.salida') %></span>
+                        <% } %>
+                      </div>
+                      <div class="lc-lap__clock">@ <%= fmtS(lap.elapsed_ms) %>s</div>
+                      <div class="lc-lap__delta <%= dCls %>"><%= dTxt %></div>
+                      <div class="lc-lap__actions">
+                        <% if (lap.is_ghost) { %>
+                          <form action="/races/<%= race.id %>/mangas/<%= manga.id %>/corrections/restore/<%= lap.id %>" method="POST">
+                            <button class="lc-iconbtn" type="submit" title="<%= t('lap-corrections.restaurar') %>">
+                              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12a9 9 0 0 1 15.5-6.4M21 3v6h-6"/></svg>
+                            </button>
+                          </form>
+                        <% } else if (!lap.transferred_from_lane && otherLanes.length > 0) { %>
+                          <form action="/races/<%= race.id %>/mangas/<%= manga.id %>/corrections/transfer/<%= lap.id %>" method="POST" class="lc-mv">
+                            <select name="to_lane" class="lc-mini-select" title="<%= t('lap-corrections.mover_a_carril') %>">
+                              <% otherLanes.forEach(l => { %>
+                                <option value="<%= l %>"><%= l %></option>
+                              <% }) %>
+                            </select>
+                            <button class="lc-iconbtn" type="submit" title="<%= t('lap-corrections.mover_a_otro_carril') %>">
+                              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M7 16l-4-4 4-4M3 12h18M17 8l4 4-4 4"/></svg>
+                            </button>
+                          </form>
+                          <form action="/races/<%= race.id %>/mangas/<%= manga.id %>/corrections/ghost/<%= lap.id %>" method="POST"
+                                onsubmit="return confirm('<%= t('lap-corrections.marcar_como_falso_positivo_nadie_recibe_esta') %>')">
+                            <button class="lc-iconbtn" type="submit" title="<%= t('lap-corrections.falso_positivo') %>">
+                              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M9 9a3 3 0 1 1 6 0M9 18h6M9 12h6"/></svg>
+                            </button>
+                          </form>
+                        <% } %>
+                        <% if (!lap.is_ghost) { %>
+                          <form action="/races/<%= race.id %>/mangas/<%= manga.id %>/corrections/edit/<%= lap.id %>" method="POST" class="lc-edit">
+                            <button class="lc-iconbtn lc-edit-toggle" type="button" title="<%= t('lap-corrections.editar_tiempo') %>">
+                              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20h9"/><path d="M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4 12.5-12.5z"/></svg>
+                            </button>
+                            <span class="lc-edit-fields" hidden>
+                              <input type="number" name="lap_time_s" class="lc-edit-input" step="0.001" min="0.1" max="999"
+                                     value="<%= (lap.lap_time_ms/1000).toFixed(3) %>"
+                                     title="<%= t('lap-corrections.nuevo_tiempo_s') %>">
+                              <button class="lc-iconbtn lc-edit-save" type="submit" title="<%= t('lap-corrections.guardar_tiempo') %>">
+                                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg>
+                              </button>
+                            </span>
+                          </form>
+                        <% } %>
+                        <form action="/races/<%= race.id %>/mangas/<%= manga.id %>/corrections/delete/<%= lap.id %>" method="POST"
+                              onsubmit="return confirm('<%= t('lap-corrections.eliminar_vuelta_permanentemente') %>')">
+                          <button class="lc-iconbtn lc-iconbtn--del" type="submit" title="<%= t('common.eliminar') %>">
+                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M4 7h16M9 7V5a2 2 0 0 1 2-2h2a2 2 0 0 1 2 2v2M6 7l1 13a2 2 0 0 0 2 2h6a2 2 0 0 0 2-2l1-13"/></svg>
+                          </button>
+                        </form>
+                      </div>
+                    </div>
+                  <% }) %>
+
+                  <!-- Insertar vuelta -->
+                  <form action="/races/<%= race.id %>/mangas/<%= manga.id %>/corrections/add" method="POST" class="lc-insert">
+                    <input type="hidden" name="lane" value="<%= s.info.lane %>">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14M5 12h14"/></svg>
+                    <input type="number" name="count" value="1" min="1" max="20" class="lc-mini-input lc-mini-input--n">
+                    <span><%= t('lap-corrections.vuelta_s_de') %></span>
+                    <input type="number" name="lap_time_s" step="0.001" min="0.1" max="999"
+                           value="<%= s.avgMs ? (s.avgMs/1000).toFixed(3) : '' %>"
+                           placeholder="s"
+                           class="lc-mini-input lc-mini-input--t" required>
+                    <span>s</span>
+                    <% if (s.avgMs) { %><span class="lc-insert__hint"><%= t('lap-corrections.media_paren') %></span><% } %>
+                    <button type="submit" class="vt-btn vt-btn--ghost vt-btn--sm" style="margin-left:auto">
+                      <svg viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg>
+                      <%= t('common.anadir') %>
+                    </button>
+                  </form>
+                <% } %>
+              </div>
+            </div>
+          <% }) %>
+        </section>
+      </div>
+    <% } %>
+
+  </div>
+</div>
+
+<script src="/socket.io/socket.io.js"></script>
+<script>
+// ── Master-detail: cambio de carril (no recarga) ──────────────────────
+document.querySelectorAll('.lc-lane').forEach(el => {
+  el.addEventListener('click', () => {
+    const idx = el.dataset.idx;
+    document.querySelectorAll('.lc-lane').forEach(l => l.classList.toggle('is-active', l === el));
+    document.querySelectorAll('.lc-detail__pane').forEach(p => p.classList.toggle('is-active', p.dataset.idx === idx));
+  });
+});
+
+// ── Auto-refresh por socket cuando llegan nuevas vueltas ──────────────
+// Cuando arriva un evento `lap` o `manga:*`, hacemos un fetch silencioso
+// del propio URL, parseamos la respuesta y sustituimos el bloque
+// `.lc-main` por la versión fresca. Conservamos el carril activo.
+// Si el usuario está escribiendo en un input o tiene un select abierto,
+// posponemos el refresh hasta que pierda el foco — así no le interrumpe.
+(function () {
+  const RACE_ID  = <%= race.id %>;
+  const MANGA_ID = <%= manga.id %>;
+  let refreshPending = false;
+  let refreshTimer = null;
+  const REFRESH_DEBOUNCE_MS = 800;
+
+  function isUserBusy() {
+    const a = document.activeElement;
+    if (!a) return false;
+    const tag = (a.tagName || '').toLowerCase();
+    return tag === 'input' || tag === 'select' || tag === 'textarea';
+  }
+
+  async function refreshNow() {
+    if (isUserBusy()) {
+      refreshPending = true;
+      return;
+    }
+    refreshPending = false;
+    try {
+      const res  = await fetch(window.location.href, { credentials: 'same-origin', headers: { 'X-Requested-With': 'fetch' } });
+      if (!res.ok) return;
+      const html = await res.text();
+      const doc  = new DOMParser().parseFromString(html, 'text/html');
+
+      // Recordar carril activo por nº de lane (no por idx — el orden no cambia)
+      const activeLaneEl = document.querySelector('.lc-lane.is-active');
+      const activeLane   = activeLaneEl ? activeLaneEl.dataset.lane : null;
+
+      // Reemplazar sidebar + panes
+      const newMain = doc.querySelector('.lc-main');
+      const oldMain = document.querySelector('.lc-main');
+      if (!newMain || !oldMain) return;
+      oldMain.replaceWith(newMain);
+
+      // Reactivar handlers del master-detail (los nuevos elementos no los tienen)
+      document.querySelectorAll('.lc-lane').forEach(el => {
+        el.addEventListener('click', () => {
+          const idx = el.dataset.idx;
+          document.querySelectorAll('.lc-lane').forEach(l => l.classList.toggle('is-active', l === el));
+          document.querySelectorAll('.lc-detail__pane').forEach(p => p.classList.toggle('is-active', p.dataset.idx === idx));
+        });
+      });
+
+      // Restaurar carril activo si todavía existe
+      if (activeLane) {
+        const same = document.querySelector(`.lc-lane[data-lane="${activeLane}"]`);
+        if (same) {
+          const idx = same.dataset.idx;
+          document.querySelectorAll('.lc-lane').forEach(l => l.classList.remove('is-active'));
+          document.querySelectorAll('.lc-detail__pane').forEach(p => p.classList.remove('is-active'));
+          same.classList.add('is-active');
+          document.querySelector(`.lc-detail__pane[data-idx="${idx}"]`)?.classList.add('is-active');
+        }
+      }
+
+      // Refrescar también la meta-pill superior (vueltas marcadas)
+      const newPill = doc.querySelector('.lc-meta-pill');
+      const oldPill = document.querySelector('.lc-meta-pill');
+      if (newPill && oldPill) oldPill.replaceWith(newPill);
+      else if (newPill && !oldPill) document.querySelector('.lc-tools')?.before(newPill);
+      else if (!newPill && oldPill) oldPill.remove();
+    } catch (err) {
+      console.warn('[corrections] refresh error', err.message || err);
+    }
+  }
+
+  function schedule() {
+    clearTimeout(refreshTimer);
+    refreshTimer = setTimeout(refreshNow, REFRESH_DEBOUNCE_MS);
+  }
+
+  // Si el usuario suelta un input que tenía focus y había refresh pendiente, ejecútalo
+  document.addEventListener('focusout', () => {
+    if (refreshPending) setTimeout(refreshNow, 100);
+  }, true);
+
+  // ── Socket ──────────────────────────────────────────────────────────
+  const socket = io({ transports: ['websocket', 'polling'] });
+  socket.on('connect', () => {});
+  socket.on('lap', data => {
+    // El servidor agrupa cruces en lote bajo carga (SocketService.emitLap):
+    // `data` es siempre un array. Ninguna vuelta trae mangaId todavía, así
+    // que de momento un solo cruce de cualquier manga dispara el refresco
+    // (mismo comportamiento previo, ahora una vez por lote en vez de una por
+    // cruce individual).
+    if (!data || data.mangaId == null) {
+      schedule();
+      return;
+    }
+    if (data.mangaId === MANGA_ID) schedule();
+  });
+  ['manga:started', 'manga:paused', 'manga:cancelled', 'manga:stopped', 'manga:resumed'].forEach(ev => {
+    socket.on(ev, () => schedule());
+  });
+
+  // ── Añadir vuelta robusto ────────────────────────────────────────────
+  // El submit nativo del form ".lc-insert" se cancelaba en manga activa: el
+  // auto-refresh (replaceWith de .lc-main) desconectaba el form del DOM justo
+  // al pulsar "Añadir", así que el POST nunca salía. Lo mandamos por fetch con
+  // delegación en `document` (que nunca se reemplaza), de modo que la petición
+  // ya está en vuelo aunque el DOM se intercambie. Al terminar, refrescamos.
+  document.addEventListener('submit', async (e) => {
+    const form = e.target;
+    if (!form || !form.classList) return;
+    // Mismo camino robusto para "Añadir vuelta" (.lc-insert), "Editar tiempo"
+    // (.lc-edit) y la coma manual (.lc-coma): fetch por delegación + refresco,
+    // por si el auto-refresh desconecta el form del DOM en manga activa.
+    if (!form.classList.contains('lc-insert') && !form.classList.contains('lc-edit')
+        && !form.classList.contains('lc-coma__form') && !form.classList.contains('lc-coma__reset')) return;
+    e.preventDefault();
+    try {
+      const res = await fetch(form.action, {
+        method: 'POST',
+        credentials: 'same-origin',
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded', 'X-Requested-With': 'fetch' },
+        body: new URLSearchParams(new FormData(form)),
+      });
+      if (!res.ok) console.warn('[corrections] POST HTTP', res.status);
+    } catch (err) {
+      console.warn('[corrections] POST error', err.message || err);
+    }
+    // Quita el foco del input para que refreshNow no quede diferido (isUserBusy).
+    if (document.activeElement && document.activeElement.blur) document.activeElement.blur();
+    refreshNow();
+  });
+
+  // Lápiz "Editar tiempo": muestra/oculta el campo de edición inline.
+  document.addEventListener('click', (e) => {
+    const btn = e.target.closest && e.target.closest('.lc-edit-toggle');
+    if (!btn) return;
+    const fields = btn.parentElement.querySelector('.lc-edit-fields');
+    if (!fields) return;
+    const opening = fields.hidden;
+    fields.hidden = !opening;
+    btn.classList.toggle('is-active', opening);
+    // Mientras se edita, colapsa las demás acciones de la fila para que el campo
+    // no desborde el ancho y no pise la columna Δ ant.
+    const actions = btn.closest('.lc-lap__actions');
+    if (actions) actions.classList.toggle('is-editing', opening);
+    if (opening) { const inp = fields.querySelector('.lc-edit-input'); if (inp) { inp.focus(); inp.select(); } }
+  });
+  // Escape cierra el campo de edición sin guardar.
+  document.addEventListener('keydown', (e) => {
+    if (e.key !== 'Escape') return;
+    const inp = e.target.closest && e.target.closest('.lc-edit-input');
+    if (!inp) return;
+    const fields = inp.closest('.lc-edit-fields'); if (fields) fields.hidden = true;
+    const tog = inp.closest('.lc-edit')?.querySelector('.lc-edit-toggle'); if (tog) tog.classList.remove('is-active');
+    const actions = inp.closest('.lc-lap__actions'); if (actions) actions.classList.remove('is-editing');
+  });
+})();
+</script>
+
+<style>
+/* ═══════════════════════════════════════════════════════════════
+   LAP CORRECTIONS — master-detail layout
+   ═══════════════════════════════════════════════════════════════ */
+.vt-page--corrections { padding: 0; min-height: 100%; display: flex; flex-direction: column; }
+.lc-shell { display: flex; flex-direction: column; height: 100%; min-height: 0; flex: 1; }
+
+/* ── Topbar ─────────────────────────────────────────────────── */
+.lc-topbar {
+  display: flex; align-items: center; gap: 18px;
+  padding: 14px 22px;
+  border-bottom: 1px solid var(--vt-border);
+  background: linear-gradient(180deg, #101015, #0c0c10);
+  flex: none;
+}
+.lc-title { display: flex; align-items: center; gap: 12px; }
+.lc-title__icon {
+  width: 40px; height: 40px; border-radius: 11px;
+  display: grid; place-items: center;
+  background: rgba(250,204,21,.12); color: var(--vt-amber);
+}
+.lc-title__icon svg { width: 22px; height: 22px; }
+.lc-title h1 {
+  font-family: 'Saira Condensed', sans-serif;
+  font-weight: 800; font-size: 22px; line-height: 1;
+  text-transform: uppercase; color: #fff;
+}
+.lc-title__sub { font-size: 12.5px; color: var(--vt-mute); margin-top: 3px; }
+.lc-title__sub b { color: var(--vt-text); }
+
+.lc-meta-pill {
+  display: inline-flex; align-items: center; gap: 8px;
+  padding: 6px 12px; border-radius: 8px;
+  background: rgba(255,138,60,.13);
+  border: 1px solid rgba(255,138,60,.32);
+  color: #ffcaa0; font-size: 12.5px;
+}
+.lc-meta-pill b { color: #fff; }
+
+.lc-tools { margin-left: auto; display: flex; align-items: center; gap: 8px; }
+
+/* ── Layout ─────────────────────────────────────────────────── */
+.lc-main {
+  flex: 1; display: grid;
+  grid-template-columns: 300px 1fr;
+  min-height: 0;
+}
+@media (max-width: 760px) { .lc-main { grid-template-columns: 1fr; } }
+
+/* ── Sidebar lanes ──────────────────────────────────────────── */
+.lc-lanes {
+  border-right: 1px solid var(--vt-border);
+  overflow-y: auto; padding: 12px;
+}
+.lc-lanes__h {
+  font-size: 11px; font-weight: 700; letter-spacing: .12em;
+  text-transform: uppercase; color: var(--vt-mute-2);
+  padding: 6px 8px 12px;
+}
+.lc-lane {
+  display: flex; align-items: center; gap: 12px;
+  padding: 11px 12px; border-radius: 11px; cursor: pointer;
+  position: relative; transition: background .14s;
+  border: 1px solid transparent;
+}
+.lc-lane + .lc-lane { margin-top: 4px; }
+.lc-lane:hover { background: rgba(255,255,255,.03); }
+.lc-lane.is-active {
+  background: var(--vt-surface);
+  border-color: var(--vt-border-2);
+}
+.lc-lane.is-active::before {
+  content: ''; position: absolute; left: 0; top: 10px; bottom: 10px;
+  width: 3px; border-radius: 3px;
+  background: var(--lane-color);
+}
+.lc-lane__chip {
+  width: 32px; height: 32px; border-radius: 9px;
+  display: grid; place-items: center;
+  color: #fff; font-weight: 800; font-size: 15px;
+  font-family: 'IBM Plex Mono', monospace;
+  background: var(--lane-color);
+  box-shadow: inset 0 1px 0 rgba(255,255,255,.25);
+  flex: none;
+}
+.lc-lane__meta { flex: 1; min-width: 0; }
+.lc-lane__name {
+  display: block; font-weight: 600; font-size: 14.5px;
+  color: var(--vt-text);
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.lc-lane__sub {
+  display: block;
+  font-family: 'IBM Plex Mono', monospace;
+  font-size: 11.5px; color: var(--vt-mute-2); margin-top: 1px;
+}
+.lc-lane__warn {
+  font-family: 'IBM Plex Mono', monospace;
+  font-size: 11px; font-weight: 700;
+  color: #ffcaa0;
+  background: rgba(255,138,60,.16);
+  padding: 2px 8px; border-radius: 6px; flex: none;
+}
+
+/* ── Detail pane ────────────────────────────────────────────── */
+.lc-detail { display: flex; flex-direction: column; min-height: 0; overflow: hidden; }
+.lc-detail__pane { display: none; flex-direction: column; flex: 1; min-height: 0; overflow: hidden; }
+.lc-detail__pane.is-active { display: flex; }
+
+.lc-detail__head {
+  display: flex; align-items: center; gap: 16px;
+  padding: 18px 24px;
+  border-bottom: 1px solid var(--vt-border);
+  flex: none;
+}
+.lc-detail__chip {
+  width: 44px; height: 44px; border-radius: 11px;
+  display: grid; place-items: center;
+  color: #fff; font-weight: 800; font-size: 20px;
+  font-family: 'IBM Plex Mono', monospace;
+  background: var(--lane-color);
+  box-shadow: inset 0 1px 0 rgba(255,255,255,.25);
+  flex: none;
+}
+.lc-detail__name {
+  font-family: 'Saira Condensed', sans-serif;
+  font-weight: 700; font-size: 22px; line-height: 1;
+  text-transform: uppercase; color: #fff;
+}
+.lc-detail__sub { font-size: 12.5px; color: var(--vt-mute); margin-top: 3px; }
+
+.lc-kpis { margin-left: auto; display: flex; gap: 10px; flex-wrap: wrap; }
+.lc-kpi {
+  text-align: center;
+  background: var(--vt-panel); border: 1px solid var(--vt-border);
+  border-radius: 10px; padding: 8px 16px; min-width: 78px;
+}
+.lc-kpi__l {
+  font-size: 9.5px; font-weight: 700; letter-spacing: .1em;
+  text-transform: uppercase; color: var(--vt-mute-2);
+}
+.lc-kpi__v {
+  font-family: 'IBM Plex Mono', monospace;
+  font-weight: 700; font-size: 17px; margin-top: 2px; color: var(--vt-text);
+}
+.lc-kpi__v--best { color: var(--vt-purple); }
+
+/* ── Laps table ─────────────────────────────────────────────── */
+.lc-laps { flex: 1; overflow-y: auto; padding: 14px 24px 24px; }
+.lc-laps__bar {
+  margin-bottom: 12px; display: flex; align-items: center;
+  justify-content: space-between; gap: 10px; flex-wrap: wrap;
+}
+.lc-laps__lbl {
+  font-size: 11px; font-weight: 700; letter-spacing: .1em;
+  text-transform: uppercase; color: var(--vt-mute-2);
+}
+/* Corrección manual de la coma: valor + fuente + guardar / volver a automática */
+.lc-coma { display: flex; align-items: center; gap: 6px; }
+.lc-coma__lbl {
+  font-size: 11px; font-weight: 700; letter-spacing: .1em;
+  text-transform: uppercase; color: var(--vt-mute-2);
+}
+.lc-coma__form { display: flex; align-items: center; gap: 4px; }
+.lc-mini-input--coma { width: 64px; text-align: center; }
+.lc-coma__tag {
+  font-size: 10px; font-weight: 700; letter-spacing: .06em;
+  text-transform: uppercase; color: var(--vt-mute-2);
+}
+.lc-coma__tag.is-manual { color: #58a6ff; }
+.lc-coma__tag.is-note { color: #e6a817; cursor: help; }
+.lc-laps__empty { color: var(--vt-mute); font-size: 14px; padding: 10px 0; }
+
+.lc-lhead, .lc-lap {
+  display: grid;
+  grid-template-columns: 64px 1fr 130px 110px 220px;
+  align-items: center; gap: 14px;
+}
+.lc-lhead {
+  padding: 0 14px 9px;
+  font-size: 10.5px; font-weight: 700; letter-spacing: .1em;
+  text-transform: uppercase; color: var(--vt-mute-2);
+}
+.lc-lhead .r { text-align: right; }
+
+.lc-lap {
+  padding: 11px 14px; border-radius: 11px;
+  background: var(--vt-panel); border: 1px solid var(--vt-border);
+  transition: border-color .14s, background .14s;
+}
+.lc-lap + .lc-lap { margin-top: 7px; }
+.lc-lap:hover { border-color: var(--vt-border-2); }
+.lc-lap__n {
+  font-family: 'IBM Plex Mono', monospace;
+  font-weight: 700; font-size: 16px; color: var(--vt-mute);
+}
+.lc-lap__fl {
+  display: inline-block; margin-left: 4px;
+  font-size: 9.5px; font-weight: 800;
+  color: var(--vt-purple); vertical-align: super;
+}
+.lc-lap__time {
+  font-family: 'IBM Plex Mono', monospace;
+  font-weight: 700; font-size: 20px;
+  font-variant-numeric: tabular-nums;
+  color: var(--vt-text);
+}
+.lc-lap__clock {
+  font-family: 'IBM Plex Mono', monospace;
+  font-size: 13px; color: var(--vt-mute-2); text-align: right;
+}
+.lc-lap__delta {
+  font-family: 'IBM Plex Mono', monospace;
+  font-size: 13px; text-align: right;
+}
+.lc-lap__delta.up   { color: var(--vt-green); }
+.lc-lap__delta.dn   { color: var(--vt-red); }
+.lc-lap__delta.zero { color: var(--vt-mute-2); }
+
+.lc-lap__actions { display: flex; justify-content: flex-end; gap: 6px; align-items: center; }
+.lc-lap__actions form { display: inline-flex; align-items: center; gap: 4px; margin: 0; }
+
+.lc-iconbtn {
+  width: 32px; height: 32px; border-radius: 8px;
+  display: grid; place-items: center;
+  cursor: pointer; border: none;
+  background: var(--vt-surface); color: var(--vt-mute);
+  box-shadow: inset 0 0 0 1px var(--vt-border);
+  transition: all .14s;
+}
+.lc-iconbtn svg { width: 15px; height: 15px; }
+.lc-iconbtn:hover { background: var(--vt-surface-2); color: var(--vt-text); }
+.lc-iconbtn--del:hover { background: var(--vt-red); color: #fff; box-shadow: none; }
+
+.lc-mini-select {
+  background: var(--vt-surface); color: var(--vt-text);
+  border: 1px solid var(--vt-border); border-radius: 7px;
+  padding: 5px 8px; font-family: 'IBM Plex Mono', monospace; font-size: 12px;
+  height: 32px; min-width: 50px;
+}
+
+/* Editar tiempo (lápiz + campo inline) */
+.lc-edit { display: inline-flex; align-items: center; gap: 4px; }
+/* Mientras se edita una fila, oculta el resto de acciones (mover/fp/borrar) para
+   que el campo quepa en la columna sin desbordar ni pisar la Δ ant. */
+.lc-lap__actions.is-editing > form:not(.lc-edit) { display: none; }
+.lc-edit-toggle.is-active { background: var(--vt-purple); color: #fff; box-shadow: none; }
+/* Solo visible cuando NO está oculto: si no, el display explícito anularía el
+   atributo [hidden] y el campo saldría siempre (pisando la Δ ant.). */
+.lc-edit-fields:not([hidden]) { display: inline-flex; align-items: center; gap: 4px; }
+.lc-edit-input {
+  background: var(--vt-surface); color: var(--vt-text);
+  border: 1px solid var(--vt-purple); border-radius: 7px;
+  padding: 5px 8px; font-family: 'IBM Plex Mono', monospace; font-size: 12px;
+  height: 32px; width: 82px; text-align: right;
+}
+.lc-edit-input::-webkit-outer-spin-button,
+.lc-edit-input::-webkit-inner-spin-button { -webkit-appearance: none; margin: 0; }
+.lc-edit-save:hover { background: var(--vt-purple); color: #fff; box-shadow: none; }
+
+/* Estados marcados */
+.lc-lap.is-flag {
+  border-color: rgba(255,138,60,.4);
+  background: linear-gradient(90deg, rgba(255,138,60,.07), transparent 60%);
+}
+.lc-lap.is-flag .lc-lap__time { color: #ff8a3c; }
+.lc-lap.is-fastest .lc-lap__time { color: var(--vt-purple); }
+
+.lc-flagtag {
+  display: inline-flex; align-items: center; gap: 5px;
+  margin-left: 10px;
+  font-size: 11px; font-weight: 600;
+  color: #ffcaa0; vertical-align: middle;
+}
+.lc-flagtag svg { width: 13px; height: 13px; }
+.lc-flagtag.is-info { color: var(--vt-blue); }
+.lc-flagtag.is-pit  { color: var(--vt-amber); }
+.lc-flagtag.is-exit { color: var(--vt-red); }
+
+/* Vuelta repuesta: la caja la contó, PitWall no la vio. Su tiempo es la media
+   del carril. Se marca en morado —ni fantasma (naranja) ni salida (rojo)— para
+   que se pueda encontrar y corregir o borrar a mano. */
+.lc-flagtag.is-est { color: #c792ea; }
+.lc-lap.is-estimated {
+  border-left: 3px solid #c792ea;
+  background: color-mix(in srgb, #c792ea 7%, transparent);
+}
+.lc-lap.is-estimated .lc-lap__time { color: #c792ea; }
+.lc-est-count {
+  display: inline-flex; align-items: center; gap: 5px;
+  font-family: 'IBM Plex Mono', monospace; font-size: 11.5px; color: #c792ea;
+}
+
+/* Vuelta de final de bandera: mismo mecanismo que la repuesta (la caja la
+   contó, PitWall no la vio), pero SIN caída de conexión — es el cruce que
+   completó justo al caer la bandera y el circuito ya cerrado descartó. Azul
+   para no confundirla con la reposición por caída (morado). */
+.lc-flagtag.is-flaglap { color: #58a6ff; }
+.lc-lap.is-flaglap {
+  border-left: 3px solid #58a6ff;
+  background: color-mix(in srgb, #58a6ff 7%, transparent);
+}
+.lc-lap.is-flaglap .lc-lap__time { color: #58a6ff; }
+.lc-flaglap-count {
+  display: inline-flex; align-items: center; gap: 5px;
+  font-family: 'IBM Plex Mono', monospace; font-size: 11.5px; color: #58a6ff;
+}
+
+/* Insertar vuelta */
+.lc-insert {
+  display: flex; align-items: center; gap: 8px;
+  margin-top: 10px; padding: 10px 14px; border-radius: 11px;
+  border: 1.5px dashed var(--vt-border);
+  color: var(--vt-mute); font-size: 13px;
+  transition: all .15s;
+}
+.lc-insert:hover { border-color: var(--vt-border-2); color: var(--vt-text); }
+.lc-insert svg { width: 15px; height: 15px; flex: none; color: var(--vt-mute); }
+.lc-insert__hint { font-size: 11.5px; color: var(--vt-mute-2); }
+.lc-mini-input {
+  background: var(--vt-surface); color: var(--vt-text);
+  border: 1px solid var(--vt-border); border-radius: 7px;
+  padding: 5px 8px; font-family: 'IBM Plex Mono', monospace; font-size: 13px;
+  height: 30px; outline: none;
+}
+.lc-mini-input:focus { border-color: rgba(239,70,81,.5); }
+.lc-mini-input--n { width: 60px; }
+.lc-mini-input--t { width: 80px; }
+
+/* Empty state */
+.lc-empty {
+  flex: 1; display: flex; flex-direction: column; align-items: center;
+  justify-content: center; gap: 12px; padding: 60px 20px;
+  color: var(--vt-mute-2); text-align: center;
+}
+.lc-empty svg { width: 48px; height: 48px; color: var(--vt-mute-2); }
+.lc-empty__t {
+  font-family: 'Saira Condensed', sans-serif;
+  font-weight: 700; font-size: 20px;
+  text-transform: uppercase; color: var(--vt-mute);
+}
+
+@media (max-width: 1100px) {
+  .lc-lhead, .lc-lap { grid-template-columns: 56px 1fr 110px 90px 180px; gap: 10px; }
+  .lc-lap__time { font-size: 17px; }
+}
+@media (max-width: 760px) {
+  .lc-lanes { max-height: 220px; }
+  .lc-detail__head { flex-wrap: wrap; }
+  .lc-kpis { margin-left: 0; width: 100%; }
+}
+</style>
+
+<%- include('../partials/footer') %>

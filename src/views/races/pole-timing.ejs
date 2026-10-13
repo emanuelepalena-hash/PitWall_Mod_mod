@@ -1,0 +1,818 @@
+<%
+function formatMs(ms) {
+  if (ms == null) return '—';
+  const m = Math.floor(ms / 60000);
+  const s = ((ms % 60000) / 1000).toFixed(3).padStart(6, '0');
+  return m > 0 ? m + ':' + s : s + 's';
+}
+function fmtSeconds3(ms) {
+  if (ms == null) return '—';
+  return (ms / 1000).toFixed(3);
+}
+const completed = session.current_idx;
+const total     = entries.length;
+const progressPct = total > 0 ? Math.round((completed / total) * 100) : 0;
+%>
+<%- include('../partials/header', { pageTitle: t('pole-timing.pole_position_cronometraje') }) %>
+
+<!-- Fuentes específicas para la estética broadcast de la pole -->
+<link rel="stylesheet" href="/css/fonts.css">
+<link rel="stylesheet" href="/css/semaphore.css">
+<script src="/js/semaphore.js"></script>
+
+<div class="pole-broadcast pole-timing-fit">
+  <div class="pole-bcast-wrap">
+
+    <% if (isGuestAccess) { %>
+      <a href="/race-stats" class="pole-back">← <%= t('common.estadisticas_en_vivo') %></a>
+    <% } else { %>
+      <a href="/races/<%= race.id %>" class="pole-back">← <%= t('race.back_to_list') %></a>
+    <% } %>
+
+    <!-- ── Cabecera horizontal (título · meta · carril · progreso) ───── -->
+    <div class="pole-topbar">
+
+    <div class="pole-title-row">
+      <div class="pole-flag" aria-hidden="true"></div>
+      <h1 class="pole-h1">Pole Position</h1>
+    </div>
+
+    <div class="pole-meta">
+      <span class="pole-meta-club"><%= race.name %></span>
+      <span class="pole-dot"></span>
+      <span>1c–<%= race.lanes_count %>c</span>
+      <span class="pole-dot"></span>
+      <span class="pole-lane-badge">
+        <%= t('common.carril_de_pole') %>
+        <span class="pole-lane-num"><%= session.lane %></span>
+      </span>
+    </div>
+
+    <div class="pole-progress">
+      <div class="pole-progress-head">
+        <span class="pole-progress-lbl"><%= t('pole-timing.progreso_de_la_sesion') %></span>
+        <span class="pole-progress-val"><b><%= completed %></b> / <%= total %> <%= t('pole-timing.completados') %></span>
+      </div>
+      <div class="pole-bar"><div class="pole-bar-fill" style="width: <%= progressPct %>%"></div></div>
+    </div>
+
+    <% if (!isGuestAccess) { %>
+    <!-- ── Opción de organización: omitir el primer cruce (out-lap) ─────── -->
+    <div class="pole-omit<%= poleLocked ? ' pole-omit--locked' : '' %>">
+      <label class="pole-omit-switch" title="<%= poleLocked
+              ? (t('pole-timing.bloqueado_ya_hay_tiempos_registrados_la_regla'))
+              : (t('pole-timing.si_esta_activo_el_primer_cruce_de_cada_piloto')) %>">
+        <input type="checkbox" id="omitFirstToggle" <%= omitFirstCrossing ? 'checked' : '' %> <%= poleLocked ? 'disabled' : '' %>>
+        <span class="pole-omit-track"><span class="pole-omit-thumb"></span></span>
+      </label>
+      <span class="pole-omit-text"><%= t('pole-timing.omitir_1er_cruce_out_lap') %></span>
+      <span id="omitFirstState" class="pole-omit-state"></span>
+      <% if (poleLocked) { %>
+        <span class="pole-omit-lock" title="<%= t('pole-timing.bloqueado_ya_hay_tiempos') %>">🔒</span>
+      <% } %>
+    </div>
+
+    <!-- ── Cambio de piloto: manual (por defecto) o automático ─────────── -->
+    <div class="pole-omit">
+      <label class="pole-omit-switch" title="<%= t('pole-timing.si_esta_activo_al_terminar_un_intento_se_pasa') %>">
+        <input type="checkbox" id="autoAdvanceToggle">
+        <span class="pole-omit-track"><span class="pole-omit-thumb"></span></span>
+      </label>
+      <span class="pole-omit-text"><%= t('pole-timing.cambio_automatico_de_piloto') %></span>
+      <span id="autoAdvanceState" class="pole-omit-state"></span>
+    </div>
+    <% } %>
+
+    <!-- ── Voz: cantar el tiempo de cada vuelta (preferencia local del navegador) ── -->
+    <div class="pole-omit">
+      <label class="pole-omit-switch" title="<%= t('pole-timing.si_esta_activo_se_cantan_los_tiempos') %>">
+        <input type="checkbox" id="voiceToggle">
+        <span class="pole-omit-track"><span class="pole-omit-thumb"></span></span>
+      </label>
+      <span class="pole-omit-text"><%= t('pole-timing.cantar_tiempos') %></span>
+      <span id="voiceState" class="pole-omit-state"></span>
+    </div>
+
+    </div><!-- /.pole-topbar -->
+
+    <!-- ── Grid principal ────────────────────────────────────────────── -->
+    <div class="pole-bcast-grid">
+
+      <!-- ── TARJETA EN PISTA ──────────────────────────────────────── -->
+      <% if (current) { %>
+      <section class="pole-bcast-card pole-live" id="js-current-card" aria-label="<%= t('pole-timing.piloto_en_pista') %>">
+
+        <div class="pole-live-status">
+          <span class="pole-pulse" aria-hidden="true"></span>
+          🚦 <%= t('pole-timing.en_pista_ahora') %>
+        </div>
+        <div class="pole-live-sub" id="js-state-sub"><%= t('client.pole-timing.cronometrando_vuelta') %></div>
+
+        <div class="pole-driver-big" id="js-current-name"><%= current.entity_name %></div>
+
+        <!-- Chrono live (oculto hasta running) -->
+        <div id="js-chrono-wrap" class="pole-chrono-wrap" style="display:none">
+          <div class="pole-chrono" id="js-chrono">0.000</div>
+          <div class="pole-chrono-delta" id="js-chrono-delta"></div>
+        </div>
+
+        <!-- Countdown discreto + mejor del piloto actual -->
+        <div id="js-countdown-wrap" class="pole-countdown-row" style="display:none">
+          <div class="pole-countdown-cell">
+            <span class="pole-cell-lbl"><%= t('pole-timing.tiempo_restante') %></span>
+            <span id="js-countdown" class="pole-countdown-val">00:00</span>
+          </div>
+          <div class="pole-countdown-cell">
+            <span class="pole-cell-lbl"><%= t('pole-timing.mejor_del_piloto') %></span>
+            <span id="js-best-val" class="pole-countdown-val pole-countdown-val--best">—</span>
+          </div>
+        </div>
+
+        <!-- Historial de vueltas (la más reciente arriba; la mejor en morado) -->
+        <div id="js-laps-wrap" class="pole-laps" style="display:none">
+          <div class="pole-laps-title"><%= t('client.common.vueltas') %></div>
+          <div id="js-laps-list" class="pole-laps-list"></div>
+        </div>
+
+        <!-- Resultado al finalizar -->
+        <div id="js-finished-result" class="pole-finished" style="display:none">
+          <span><%= t('common.mejor_vuelta') %></span>
+          <strong id="js-final-best">—</strong>
+          <span class="pole-finished-laps" id="js-final-laps"></span>
+        </div>
+
+        <!-- Botones (solo operador; el invitado sigue el estado en modo lectura) -->
+        <% if (!isGuestAccess) { %>
+        <%
+          // Saltar: 1er salto → al final de la cola (otra oportunidad luego).
+          // 2º salto seguido → ya se marca AUSENTE. El texto avisa de cuál toca.
+          const skipCount = current ? (current.skip_count || 0) : 0;
+          const skipLabel = skipCount === 0 ? t('pole-timing.no_se_presenta') : t('pole-timing.confirmar_ausencia');
+          const skipConfirmMsg = t(skipCount === 0 ? 'pole-timing.confirm_salto_1' : 'pole-timing.confirm_salto_2',
+                                   { nombre: current ? current.entity_name : '' }).replace(/'/g, "\\'");
+        %>
+        <div id="js-btn-idle" class="pole-btn-row" style="display:none">
+          <button id="js-btn-start" class="pole-btn-start" onclick="startTiming()">
+            <span class="pole-btn-tri">▶</span> <%= t('pole-timing.iniciar') %>
+          </button>
+        </div>
+
+        <%# GO / PAUSE / REANUDAR dados por PitWall: solo con BART, TicTac o simulación.
+            Con una caja DS manda la caja y estos botones no existen. %>
+        <% if (softwareGo) { %>
+        <div id="js-btn-sw" class="pole-btn-row" style="display:none">
+          <button id="js-btn-go" class="pole-btn-start" onclick="swCommand('go')" style="display:none">
+            <span class="pole-btn-tri">▶</span> GO
+          </button>
+          <button id="js-btn-pause" class="pole-btn-skip" onclick="swCommand('pause')" style="display:none">
+            ⏸ PAUSE
+          </button>
+          <button id="js-btn-resume" class="pole-btn-start" onclick="swCommand('resume')" style="display:none">
+            <span class="pole-btn-tri">▶</span> <%= t('live.reanudar') %>
+          </button>
+        </div>
+        <% } %>
+
+        <div id="js-btn-running" class="pole-btn-row" style="display:none">
+          <button id="js-btn-stop" class="pole-btn-stop" onclick="stopTiming()">
+            ⏹ <%= t('common.parar') %>
+          </button>
+        </div>
+
+        <!-- "Saltar": visible en idle Y en standby (esperando GO) — que es donde
+             el operador aterriza casi siempre, ver enterStandby()/init más abajo.
+             Oculto mientras se cronometra de verdad (running) o tras terminar
+             (finished), donde no tiene sentido saltar a quien ya ha corrido. -->
+        <div id="js-btn-skip-row" class="pole-btn-row" style="display:none">
+          <form class="pole-skip-form" action="/races/<%= race.id %>/pole/participant/skip" method="POST"
+                onsubmit="return confirm('<%= skipConfirmMsg %>')">
+            <button type="submit" class="pole-btn-skip">
+              ⏭ <%= skipLabel %>
+            </button>
+          </form>
+        </div>
+
+        <div id="js-btn-finished" class="pole-btn-row" style="display:none">
+          <form id="js-next-form" action="/races/<%= race.id %>/pole/next" method="POST">
+            <button type="submit" class="pole-btn-next">
+              <span id="js-btn-next-label"><%= t('client.pole-timing.siguiente_piloto') %></span>
+            </button>
+          </form>
+        </div>
+        <% } %>
+
+        <!-- Siguiente piloto (chip al pie) -->
+        <div class="pole-next-chip" id="js-next-chip" style="<%= next ? '' : 'display:none' %>">
+          <span class="pole-next-chip-lbl">⏭ <%= t('pole-timing.siguiente') %></span>
+          <span class="pole-next-chip-name" id="js-next-chip-name"><%= next ? next.entity_name : '' %></span>
+        </div>
+
+      </section>
+      <% } %>
+
+      <!-- ── ORDEN DE SALIDA ───────────────────────────────────────── -->
+      <section class="pole-bcast-card" aria-label="<%= t('pole-timing.orden_de_salida') %>">
+        <div class="pole-bcast-title">
+          <span class="pole-bcast-ico">▶</span>
+          <%= t('pole-timing.orden_de_salida') %>
+        </div>
+        <div class="pole-bcast-list" id="js-order">
+          <!-- populated by JS / renderOrder — así se mantiene al día sin recargar
+               cuando avanza el piloto actual (ver switchCurrent) -->
+        </div>
+      </section>
+
+      <!-- ── CLASIFICACIÓN EN VIVO ─────────────────────────────────── -->
+      <section class="pole-bcast-card" aria-label="<%= t('pole-timing.clasificacion_en_vivo') %>">
+        <div class="pole-bcast-title">
+          <span class="pole-bcast-ico">🏆</span>
+          <%= t('pole-timing.clasificacion_en_vivo') %>
+        </div>
+        <div class="pole-tower" id="js-tower">
+          <!-- populated by JS / renderTower -->
+        </div>
+      </section>
+
+    </div><!-- /grid -->
+
+    <div class="pole-bcast-foot">
+      <%= t('common.si_pole_clasificacion_a_vuelta_unica_el_mas') %>
+    </div>
+
+  </div>
+</div>
+
+<script src="/socket.io/socket.io.js"></script>
+<script>
+const RACE_ID      = '<%= race.id %>';
+const IS_RUNNING   = <%- isTimingRunning ? 'true' : 'false' %>;
+const SOFTWARE_GO  = <%- softwareGo ? 'true' : 'false' %>;
+const DURATION_MS  = <%= durationMs %>;
+const IS_GUEST     = <%- isGuestAccess ? 'true' : 'false' %>;
+let   poleBestMs   = <%- poleBestMs != null ? poleBestMs : 'null' %>; // tiempo a batir (ms)
+let   poleHolder   = <%- poleHolder ? JSON.stringify(poleHolder.entity_name) : 'null' %>;
+const CURRENT_NAME = <%- current ? JSON.stringify(current.entity_name) : 'null' %>;
+
+// Seed de la torre (entries con su mejor tiempo + flags)
+const seedEntries = [
+  <% entries.forEach((e, i) => { %>
+    {
+      name:      <%- JSON.stringify(e.entity_name) %>,
+      categoria: <%- e.categoria ? JSON.stringify(e.categoria) : 'null' %>,
+      bestLapMs: <%- e.lap_time_ms != null ? e.lap_time_ms : 'null' %>,
+      isNoShow:  <%= e.is_noshow ? 'true' : 'false' %>,
+      isCurrent: <%= i === session.current_idx ? 'true' : 'false' %>,
+      isDone:    <%= i < session.current_idx ? 'true' : 'false' %>,
+    },
+  <% }) %>
+];
+
+// ── Helpers ──────────────────────────────────────────────────────────────
+function formatMs(ms) {
+  if (ms == null) return '—';
+  const m = Math.floor(ms / 60000);
+  const s = ((ms % 60000) / 1000).toFixed(3).padStart(6, '0');
+  return m > 0 ? m + ':' + s : s + 's';
+}
+function fmtSeconds3(ms) { if (ms == null) return '—'; return (ms / 1000).toFixed(3).replace('.', ','); }
+function fmtDelta(ms) {
+  if (ms == null) return '';
+  const sign = ms >= 0 ? '+' : '−';
+  return sign + (Math.abs(ms) / 1000).toFixed(3);
+}
+// ── Voz ──────────────────────────────────────────────────────────────────
+const POLE_VOICE_KEY = 'pitwall.pole.voice';
+let voiceOn = (() => { try { return localStorage.getItem(POLE_VOICE_KEY) !== '0'; } catch { return true; } })();
+const speechQueue = [];
+let   speechBusy  = false;
+function formatMsForSpeech(ms) {
+  const totalSec = Math.floor(ms / 1000);
+  const hStr = String(Math.floor((ms % 1000) / 10)).padStart(2, '0');
+  const secs = totalSec % 60, mins = Math.floor(totalSec / 60);
+  if (mins > 0) return `${mins}:${String(secs).padStart(2, '0')}.${hStr}`;
+  return I18N.t('client.js.secs_con_hstr', { secs, hStr });
+}
+function drainSpeech() {
+  if (!speechQueue.length) { speechBusy = false; return; }
+  speechBusy = true;
+  const utt = new SpeechSynthesisUtterance(speechQueue.shift());
+  utt.lang  = I18N.locale;
+  utt.rate  = 1.15;
+  utt.onend = utt.onerror = drainSpeech;
+  window.speechSynthesis.speak(utt);
+}
+function announce(text) {
+  if (!window.speechSynthesis || !voiceOn) return;
+  speechQueue.push(text);
+  if (!speechBusy) drainSpeech();
+}
+
+function show(id) { const el = document.getElementById(id); if (el) el.style.display = ''; }
+function hide(id) { const el = document.getElementById(id); if (el) el.style.display = 'none'; }
+
+// Sufijo de categoría coloreado, igual que en el live (misma paleta y hash).
+const CAT_PALETTE = ['#58a6ff','#f6c90e','#3fb950','#ff6b9d','#ff9800','#ba68c8','#00bcd4','#e63946','#8bc34a','#ce93d8','#4dd0e1','#ffab40'];
+function catColor(cat) {
+  if (!cat) return null;
+  let h = 0;
+  for (let i = 0; i < cat.length; i++) h = (h * 31 + cat.charCodeAt(i)) >>> 0;
+  return CAT_PALETTE[h % CAT_PALETTE.length];
+}
+function teamHtml(name, cat) {
+  return cat ? `${name}<span class="cat-suffix" style="color:${catColor(cat)}"> - ${cat}</span>` : name;
+}
+
+// ── Torre de tiempos ─────────────────────────────────────────────────────
+function renderTower() {
+  // Mezcla el piloto en pista con los timed según su mejor vuelta actual.
+  // Si aún no tiene tiempo, se muestra al final con "En pista".
+  const current        = seedEntries.find(e => e.isCurrent);
+  // Ausentes fuera del ranking por tiempo: su 0.00 sintético no es una vuelta real.
+  const timedAll       = seedEntries.filter(e => e.bestLapMs != null && !e.isNoShow)
+                                    .slice()
+                                    .sort((a, b) => a.bestLapMs - b.bestLapMs);
+  const noShow         = seedEntries.filter(e => e.isNoShow);
+  const pending        = seedEntries.filter(e => e.bestLapMs == null && !e.isCurrent && !e.isDone);
+  const currentNoTime  = current && current.bestLapMs == null ? current : null;
+
+  const leaderMs = timedAll.length > 0 ? timedAll[0].bestLapMs : null;
+
+  const tower = document.getElementById('js-tower');
+  if (!tower) return;
+  const rows = [];
+
+  timedAll.forEach((e, i) => {
+    const isP1     = i === 0;
+    const isLive   = e.isCurrent;
+    const gapMs    = isP1 ? null : (e.bestLapMs - leaderMs);
+    const cls = [
+      'pole-tower-row',
+      isP1   ? 'pole-tower-row--p1'      : '',
+      isLive ? 'pole-tower-row--running' : ''
+    ].filter(Boolean).join(' ');
+    const nameSuffix = isP1
+      ? ' <span class="pole-tower-fastest">' + (I18N.t('client.common.vuelta_rapida')) + '</span>'
+      : '';
+    const liveTag = isLive
+      ? ' <span class="pole-tower-livetag">' + (I18N.t('client.pole-timing.en_pista')) + '</span>'
+      : '';
+    rows.push(`
+      <div class="${cls}">
+        <div class="pole-tower-pos">${i + 1}</div>
+        <div class="pole-tower-name">${teamHtml(e.name, e.categoria)}${nameSuffix}${liveTag}</div>
+        <div class="pole-tower-time">
+          ${fmtSeconds3(e.bestLapMs)}
+          ${isP1
+            ? '<span class="pole-tower-gap">' + (I18N.t('client.common.lider')) + '</span>'
+            : '<span class="pole-tower-gap">+' + (gapMs / 1000).toFixed(3) + '</span>'}
+        </div>
+      </div>`);
+  });
+
+  if (currentNoTime) {
+    const liveMs = window._currentLiveMs ?? null;
+    const liveTxt = liveMs != null ? fmtSeconds3(liveMs) : (I18N.t('client.common.en_pista'));
+    rows.push(`
+      <div class="pole-tower-row pole-tower-row--running">
+        <div class="pole-tower-pos">●</div>
+        <div class="pole-tower-name">${teamHtml(currentNoTime.name, currentNoTime.categoria)}</div>
+        <div class="pole-tower-time">${liveTxt}</div>
+      </div>`);
+  }
+
+  pending.forEach(e => {
+    rows.push(`
+      <div class="pole-tower-row pole-tower-row--pending">
+        <div class="pole-tower-pos">—</div>
+        <div class="pole-tower-name">${teamHtml(e.name, e.categoria)}</div>
+        <div class="pole-tower-time">—</div>
+      </div>`);
+  });
+
+  // Ausentes: siempre al final, con su propia etiqueta en vez de un tiempo.
+  noShow.forEach(e => {
+    rows.push(`
+      <div class="pole-tower-row pole-tower-row--pending">
+        <div class="pole-tower-pos">—</div>
+        <div class="pole-tower-name">${teamHtml(e.name, e.categoria)}</div>
+        <div class="pole-tower-time">${I18N.t('client.common.ausente')}</div>
+      </div>`);
+  });
+
+  tower.innerHTML = rows.join('');
+  layoutTowerColumns(rows.length);
+}
+
+// Reparte la "Clasificación en vivo" en tantas columnas como hagan falta para
+// que quepan TODOS los equipos sin scroll, pero estirándolas para llenar el
+// ancho real de la tarjeta (antes se usaba solo un ancho mínimo por columna
+// y sobraba un hueco vacío a la derecha aunque los nombres cupieran de sobra).
+let _towerLastRowCount = 0;
+function layoutTowerColumns(rowCount) {
+  if (typeof rowCount === 'number') _towerLastRowCount = rowCount;
+  const tower = document.getElementById('js-tower');
+  if (!tower || !_towerLastRowCount) return;
+  requestAnimationFrame(() => {
+    const availH = tower.clientHeight;
+    const availW = tower.clientWidth;
+    if (!availH || !availW) return;
+    const ROW_H  = 46;   // alto aprox. de fila (padding + margen entre filas)
+    const MIN_COL_W = 215; // nunca más estrechas que esto (deja sitio de sobra al nombre
+                            // aparte de la posición y el tiempo; con columnas más
+                            // estrechas el nombre se quedaba con muy poco margen y
+                            // volvía a recortarse con "…")
+    const GAP = 18;
+    const perCol       = Math.max(1, Math.floor(availH / ROW_H));
+    const neededCols    = Math.max(1, Math.ceil(_towerLastRowCount / perCol));
+    const maxColsByWidth = Math.max(1, Math.floor((availW + GAP) / (MIN_COL_W + GAP)));
+    const cols = Math.min(neededCols, maxColsByWidth);
+    tower.style.columnCount = cols;
+    tower.style.columnWidth = 'auto'; // las columnas se estiran para llenar el ancho
+  });
+}
+window.addEventListener('resize', () => layoutTowerColumns());
+
+// Actualiza un entry y re-renderiza
+function updateEntryTime(name, bestLapMs) {
+  const e = seedEntries.find(x => x.name === name);
+  if (!e) return;
+  e.bestLapMs = bestLapMs;
+  // actualizar poleBestMs si supera
+  if (poleBestMs == null || bestLapMs < poleBestMs) {
+    poleBestMs = bestLapMs;
+    poleHolder = name;
+  }
+  renderTower();
+}
+
+// ── Orden de salida ──────────────────────────────────────────────────────
+function renderOrder() {
+  const list = document.getElementById('js-order');
+  if (!list) return;
+  list.innerHTML = seedEntries.map((e, i) => {
+    const cls = e.isCurrent ? 'pole-bcast-row pole-bcast-row--now'
+              : e.isDone    ? 'pole-bcast-row pole-bcast-row--done'
+              :               'pole-bcast-row';
+    const tag = e.isCurrent
+      ? '<span class="pole-bcast-tag pole-bcast-tag--now">' + (I18N.t('client.pole-timing.en_pista')) + '</span>'
+      : e.isDone
+      ? '<span class="pole-bcast-tag pole-bcast-tag--done">✓ ' + (I18N.t('client.pole-timing.hecho')) + '</span>'
+      : '';
+    return '<div class="' + cls + '">'
+      + '<span class="pole-bcast-pos">' + (i + 1) + '</span>'
+      + '<span class="pole-bcast-name">' + e.name + '</span>'
+      + tag + '</div>';
+  }).join('');
+}
+
+// Cambia el piloto actual (avance de la sesión) SIN recargar: lo detectan los
+// espectadores (invitado, y en el futuro el cliente Lap) que se quedan en esta
+// misma página varios pilotos seguidos, cosa que antes no pasaba — solo la
+// veía el operador, que recargaba al pulsar "Siguiente piloto".
+let currentEntryName = CURRENT_NAME;
+function switchCurrent(name) {
+  if (!name || name === currentEntryName) return;
+  currentEntryName = name;
+  const idx = seedEntries.findIndex(e => e.name === name);
+  seedEntries.forEach((e, i) => {
+    e.isCurrent = i === idx;
+    e.isDone    = idx >= 0 ? i < idx : e.isDone;
+  });
+  const nameEl = document.getElementById('js-current-name');
+  if (nameEl) nameEl.textContent = name;
+  const next = idx >= 0 ? seedEntries[idx + 1] : null;
+  const chip = document.getElementById('js-next-chip');
+  const chipName = document.getElementById('js-next-chip-name');
+  if (chip) chip.style.display = next ? '' : 'none';
+  if (chipName) chipName.textContent = next ? next.name : '';
+  const bestEl = document.getElementById('js-best-val');
+  if (bestEl) bestEl.textContent = '—';   // nuevo piloto: aún sin vuelta
+  const list = document.getElementById('js-laps-list');
+  if (list) list.innerHTML = '';
+  renderOrder();
+  renderTower();
+}
+
+// ── Estados ──────────────────────────────────────────────────────────────
+let state = IS_RUNNING ? 'running' : 'idle';
+
+function setStateSub(text) {
+  const el = document.getElementById('js-state-sub');
+  if (el) el.textContent = text;
+}
+
+// GO / PAUSE / REANUDAR de PitWall (solo existen con BART, TicTac o simulación).
+function showSw(which) {
+  if (!SOFTWARE_GO) return;
+  const row = document.getElementById('js-btn-sw');
+  if (!row) return;
+  for (const id of ['go', 'pause', 'resume']) {
+    const b = document.getElementById('js-btn-' + id);
+    if (b) { b.style.display = id === which ? '' : 'none'; b.disabled = false; }
+  }
+  row.style.display = which ? '' : 'none';
+}
+async function swCommand(name) {
+  const btn = document.getElementById('js-btn-' + name);
+  if (btn) btn.disabled = true;
+  try {
+    const r = await fetch('/races/' + RACE_ID + '/pole/participant/' + name, { method: 'POST' });
+    if (!r.ok) throw new Error(name + ' failed');
+  } catch (e) {
+    if (btn) btn.disabled = false;
+  }
+}
+
+function enterIdle() {
+  state = 'idle';
+  showSw(null);
+  clearAutoAdvance();
+  show('js-btn-idle'); hide('js-btn-running'); hide('js-btn-finished'); show('js-btn-skip-row');
+  hide('js-chrono-wrap'); hide('js-countdown-wrap'); hide('js-finished-result');
+  setStateSub(I18N.t('client.pole-timing.preparado'));
+}
+function enterStandby() {
+  state = 'standby';
+  showSw('go');
+  clearAutoAdvance();
+  hide('js-btn-idle'); show('js-btn-running'); hide('js-btn-finished'); show('js-btn-skip-row');
+  hide('js-chrono-wrap'); hide('js-countdown-wrap'); hide('js-laps-wrap'); hide('js-finished-result');
+  setStateSub(SOFTWARE_GO ? I18N.t('client.pole-timing.pulsa_go_para_empezar') : I18N.t('client.pole-timing.esperando_go_del_ds_300'));
+  // Limpiar historial al entrar en standby (nuevo intento)
+  const list = document.getElementById('js-laps-list');
+  if (list) list.innerHTML = '';
+}
+function enterRunning() {
+  state = 'running';
+  showSw('pause');
+  clearAutoAdvance();
+  hide('js-btn-idle'); show('js-btn-running'); hide('js-btn-finished'); hide('js-btn-skip-row');
+  show('js-chrono-wrap'); show('js-countdown-wrap'); show('js-laps-wrap'); hide('js-finished-result');
+  setStateSub(I18N.t('client.pole-timing.cronometrando_vuelta'));
+  setCountdown(DURATION_MS);
+  updateChrono(0);
+}
+function enterPaused() {
+  state = 'paused';
+  showSw('resume');
+  hide('js-btn-skip-row');
+  setStateSub(I18N.t('client.pole-timing.pausa'));
+}
+function enterFinished(bestLapMs, lapCount) {
+  state = 'finished';
+  showSw(null);
+  hide('js-btn-idle'); hide('js-btn-running'); show('js-btn-finished'); hide('js-btn-skip-row');
+  hide('js-chrono-wrap');
+  show('js-finished-result');
+  setStateSub(I18N.t('client.pole-timing.intento_terminado'));
+  document.getElementById('js-final-best').textContent = formatMs(bestLapMs);
+  const n = lapCount || 0;
+  document.getElementById('js-final-laps').textContent =
+    n === 0 ? '' : (n === 1 ? (I18N.t('client.pole-timing.1_vuelta')) : I18N.t('client.pole-timing.n_vueltas', { n }));
+  if (isAutoAdvance()) scheduleAutoAdvance();
+}
+
+// ── Cambio automático de piloto ─────────────────────────────────────────
+const AUTO_ADVANCE_KEY = 'pw_pole_auto_advance';
+const AUTO_ADVANCE_SECONDS = 3;
+let autoAdvanceTimer = null;
+function isAutoAdvance() { return localStorage.getItem(AUTO_ADVANCE_KEY) === '1'; }
+function clearAutoAdvance() {
+  if (autoAdvanceTimer) { clearTimeout(autoAdvanceTimer); autoAdvanceTimer = null; }
+  const label = document.getElementById('js-btn-next-label');
+  if (label) label.textContent = I18N.t('client.pole-timing.siguiente_piloto');
+}
+function scheduleAutoAdvance() {
+  clearAutoAdvance();
+  let secsLeft = AUTO_ADVANCE_SECONDS;
+  const label = document.getElementById('js-btn-next-label');
+  const tick = () => {
+    if (label) label.textContent = (I18N.t('client.pole-timing.siguiente_piloto_en')) + secsLeft + 's…';
+    if (secsLeft <= 0) {
+      autoAdvanceTimer = null;
+      const form = document.getElementById('js-next-form');
+      if (form) form.submit();
+      return;
+    }
+    secsLeft--;
+    autoAdvanceTimer = setTimeout(tick, 1000);
+  };
+  tick();
+}
+
+function setCountdown(remainingMs) {
+  const el = document.getElementById('js-countdown');
+  if (!el) return;
+  const total = Math.max(0, remainingMs);
+  const m = Math.floor(total / 60000);
+  const s = Math.floor((total % 60000) / 1000);
+  el.textContent = String(m).padStart(2,'0') + ':' + String(s).padStart(2,'0');
+  el.classList.toggle('pole-countdown-val--urgent', total <= 10000);
+}
+
+function updateChrono(currentLapMs) {
+  window._currentLiveMs = currentLapMs;
+  const el = document.getElementById('js-chrono');
+  const delta = document.getElementById('js-chrono-delta');
+  if (el) el.textContent = (currentLapMs / 1000).toFixed(3);
+  // color y delta vs pole
+  let cls = '';
+  let dtxt = '';
+  if (poleBestMs != null) {
+    const diff = currentLapMs - poleBestMs;
+    cls = diff <= 0 ? 'pole-chrono--ahead' : 'pole-chrono--behind';
+    dtxt = (diff <= 0 ? '−' : '+') + (Math.abs(diff) / 1000).toFixed(3) + ' vs pole';
+  } else {
+    dtxt = I18N.t('client.pole-timing.sin_referencia');
+  }
+  if (el) el.className = 'pole-chrono ' + cls;
+  if (delta) {
+    delta.textContent = dtxt;
+    delta.className = 'pole-chrono-delta ' + cls;
+  }
+  // re-render torre cada tick para refrescar el live row
+  renderTower();
+}
+
+// Semáforo: showSemaphore / semaphoreStep / semaphoreGo viven en
+// /js/semaphore.js (cargado en el header). No dupliques aquí.
+
+// ── API + sockets ────────────────────────────────────────────────────────
+async function startTiming() {
+  const btn = document.getElementById('js-btn-start');
+  if (btn) btn.disabled = true;
+  try {
+    const r = await fetch('/races/' + RACE_ID + '/pole/participant/start', { method: 'POST' });
+    if (!r.ok) throw new Error('start failed');
+    enterStandby();
+  } catch(e) {
+    if (btn) btn.disabled = false;
+    enterIdle();
+  }
+}
+
+async function stopTiming() {
+  if (!confirm(I18N.t('client.pole-timing.reiniciar_la_pole_de_este_piloto_se_descartara'))) return;
+  const btn = document.getElementById('js-btn-stop');
+  if (btn) btn.disabled = true;
+  try {
+    await fetch('/races/' + RACE_ID + '/pole/participant/stop', { method: 'POST' });
+    // Tras abortar, volvemos automáticamente a standby
+    await startTiming();
+  } catch(e) {
+    if (btn) btn.disabled = false;
+  }
+}
+
+const socket = io({ query: { view: 'pole' } });
+socket.on('race:semaphore',      () => showSemaphore());
+socket.on('race:semaphore_step', () => semaphoreStep());
+
+socket.on('pole:standby', (data) => {
+  switchCurrent(data && data.entryName);
+  if (state !== 'standby') enterStandby();
+});
+socket.on('pole:started', (data) => {
+  switchCurrent(data && data.entryName);
+  if (document.getElementById('semaphore-overlay')) semaphoreGo(null);
+  if (state !== 'running') enterRunning();
+});
+socket.on('pole:paused',  () => { if (state === 'running') enterPaused(); });
+socket.on('pole:resumed', () => {
+  if (document.getElementById('semaphore-overlay')) semaphoreGo(null);
+  if (state === 'paused') { state = 'running'; showSw('pause'); setStateSub(I18N.t('client.pole-timing.cronometrando_vuelta')); }
+});
+socket.on('pole:aborted', () => {
+  document.getElementById('js-final-laps') && (document.getElementById('js-final-laps').textContent = '');
+  enterIdle();
+});
+
+socket.on('pole:tick', ({ remainingMs, currentLapMs }) => {
+  // Si recibimos ticks pero la UI no está en running, recuperamos el estado.
+  if (state === 'idle' || state === 'standby') {
+    if (document.getElementById('semaphore-overlay')) semaphoreGo(null);
+    enterRunning();
+  }
+  if (state === 'paused') return;
+  setCountdown(remainingMs);
+  updateChrono(currentLapMs);
+});
+
+socket.on('pole:lap', ({ lapNumber, lapTimeMs, bestLapMs, improved }) => {
+  // Antes de updateEntryTime: comparar contra la pole que había ANTES de esta vuelta.
+  const isNewPole = improved && (poleBestMs == null || bestLapMs < poleBestMs);
+  const time = formatMsForSpeech(lapTimeMs);
+  announce(isNewPole ? I18N.t('client.pole-timing.voz_nueva_pole', { time })
+         : improved  ? I18N.t('client.pole-timing.voz_mejor_vuelta', { time })
+         :             time);
+  const bestEl = document.getElementById('js-best-val');
+  if (bestEl) bestEl.textContent = formatMs(bestLapMs);
+  if (improved && currentEntryName) updateEntryTime(currentEntryName, bestLapMs);
+  // Añadir fila de vuelta al historial (más reciente arriba)
+  const list = document.getElementById('js-laps-list');
+  if (list) {
+    // marcar la fila anterior "best" como no-best si ahora hay una mejor
+    if (improved) list.querySelectorAll('.pole-lap-row--best').forEach(r => r.classList.remove('pole-lap-row--best'));
+    const row = document.createElement('div');
+    row.className = 'pole-lap-row' + (improved ? ' pole-lap-row--best' : '');
+    row.innerHTML =
+      '<span class="pole-lap-num">' + (I18N.t('client.common.vuelta')) + ' ' + lapNumber + '</span>' +
+      '<span class="pole-lap-time">' + fmtSeconds3(lapTimeMs) + (improved ? ' ★' : '') + '</span>';
+    list.prepend(row);
+  }
+});
+
+socket.on('pole:finished', ({ entryName, bestLapMs, lapCount }) => {
+  if (entryName && bestLapMs != null) updateEntryTime(entryName, bestLapMs);
+  enterFinished(bestLapMs, lapCount);
+});
+
+// ── Init ─────────────────────────────────────────────────────────────────
+renderTower();
+renderOrder();
+if (IS_RUNNING) {
+  enterRunning();
+} else if (!CURRENT_NAME) {
+  enterIdle();
+} else if (IS_GUEST) {
+  // El invitado no arma el cronometraje (esa llamada la bloquea el servidor
+  // por IP); se limita a reflejar el estado — los sockets lo corrigen en
+  // cuanto el operador (u otro espectador) lo ponga en marcha.
+  enterStandby();
+} else {
+  enterStandby();
+  startTiming();
+}
+
+// ── Toggle: cambio automático de piloto (preferencia local del navegador) ──
+(function () {
+  const tgl   = document.getElementById('autoAdvanceToggle');
+  const label = document.getElementById('autoAdvanceState');
+  if (!tgl) return;
+  function paint() { if (label) label.textContent = tgl.checked ? 'ON' : 'OFF'; }
+  tgl.checked = isAutoAdvance();
+  paint();
+  tgl.addEventListener('change', () => {
+    localStorage.setItem(AUTO_ADVANCE_KEY, tgl.checked ? '1' : '0');
+    paint();
+    if (tgl.checked && state === 'finished') scheduleAutoAdvance();
+    else clearAutoAdvance();
+  });
+})();
+
+// ── Toggle: cantar tiempos (preferencia local del navegador, activo por defecto) ──
+(function () {
+  const tgl   = document.getElementById('voiceToggle');
+  const label = document.getElementById('voiceState');
+  if (!tgl) return;
+  function paint() { if (label) label.textContent = tgl.checked ? 'ON' : 'OFF'; }
+  tgl.checked = voiceOn;
+  paint();
+  tgl.addEventListener('change', () => {
+    voiceOn = tgl.checked;
+    try { localStorage.setItem(POLE_VOICE_KEY, voiceOn ? '1' : '0'); } catch {}
+    if (!voiceOn) { speechQueue.length = 0; window.speechSynthesis?.cancel(); speechBusy = false; }
+    paint();
+  });
+})();
+
+// ── Toggle: omitir el primer cruce (out-lap) — decisión de la organización ──
+(function () {
+  const tgl   = document.getElementById('omitFirstToggle');
+  const state = document.getElementById('omitFirstState');
+  if (!tgl) return;
+  function paint() { if (state) state.textContent = tgl.checked ? (I18N.t('client.pole-timing.on')) : 'OFF'; }
+  paint();
+  tgl.addEventListener('change', async () => {
+    paint();
+    try {
+      const r = await fetch('/races/' + RACE_ID + '/pole/omit-first', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ value: tgl.checked }),
+      });
+      const j = await r.json();
+      tgl.checked = !!j.omitFirstCrossing;  // confirma el estado real del servidor
+      paint();
+    } catch (e) { /* sin red: el toggle vuelve a su estado al recargar */ }
+  });
+})();
+</script>
+
+<style>
+.pole-omit { display: flex; align-items: center; gap: .5rem; margin-top: .7rem; }
+.pole-omit-switch { position: relative; display: inline-block; width: 42px; height: 22px; cursor: pointer; flex: 0 0 auto; }
+.pole-omit-switch input { position: absolute; opacity: 0; width: 0; height: 0; }
+.pole-omit-track { position: absolute; inset: 0; background: #30363d; border-radius: 999px; transition: background .15s; }
+.pole-omit-thumb { position: absolute; top: 2px; left: 2px; width: 18px; height: 18px; background: #8b949e; border-radius: 50%; transition: transform .15s, background .15s; }
+.pole-omit-switch input:checked + .pole-omit-track { background: #1f6feb; }
+.pole-omit-switch input:checked + .pole-omit-track .pole-omit-thumb { transform: translateX(20px); background: #fff; }
+.pole-omit-text { font-size: .78rem; color: #8b949e; text-transform: uppercase; letter-spacing: .03em; }
+.pole-omit-state { font-size: .72rem; font-weight: 700; color: #1f6feb; font-family: 'IBM Plex Mono', monospace; }
+.pole-omit--locked { opacity: .65; }
+.pole-omit--locked .pole-omit-switch { cursor: not-allowed; }
+.pole-omit-switch input:disabled + .pole-omit-track { cursor: not-allowed; }
+.pole-omit-lock { font-size: .8rem; }
+</style>
+
+<%- include('../partials/footer') %>

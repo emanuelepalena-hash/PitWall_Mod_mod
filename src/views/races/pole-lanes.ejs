@@ -1,0 +1,330 @@
+<%
+function formatMs(ms) {
+  if (!ms) return '—';
+  const m = Math.floor(ms / 60000);
+  const s = ((ms % 60000) / 1000).toFixed(3).padStart(6, '0');
+  return m > 0 ? m + ':' + s : s + 's';
+}
+function fmtSeconds3(ms) {
+  if (!ms) return '—';
+  return (ms / 1000).toFixed(3);
+}
+const poleHolderName = entries[0]?.entity_name || '';
+%>
+<%- include('../partials/header', { pageTitle: t('pole-lanes.eleccion_de_carriles') }) %>
+
+<link rel="stylesheet" href="/css/fonts.css">
+
+<div class="pole-broadcast">
+  <div class="pole-bcast-wrap">
+
+    <!-- ── Cabecera ──────────────────────────────────────────────────── -->
+    <a href="/races/<%= race.id %>/pole/results" class="pole-back">← <%= t('common.volver_a_resultados') %></a>
+
+    <div class="pole-title-row">
+      <div class="pole-flag" aria-hidden="true"></div>
+      <h1 class="pole-h1"><%= t('pole-lanes.eleccion_de_carril') %></h1>
+    </div>
+
+    <div class="pole-meta">
+      <span class="pole-meta-club"><%= race.name %></span>
+      <span class="pole-dot"></span>
+      <span>1c–<%= race.lanes_count %>c</span>
+      <span class="pole-dot"></span>
+      <span class="pole-lane-badge">
+        <%= t('pole-lanes.carriles_activos') %>
+        <span class="pole-lane-num"><%= activeLanes.length %></span>
+      </span>
+      <% if (poleHolderName) { %>
+        <span class="pole-dot"></span>
+        <span class="pole-meta-pole"><%= t('common.pole') %> <b><%= poleHolderName %></b></span>
+      <% } %>
+    </div>
+
+    <p class="pole-lanes-hint">
+      <%= t('pole-lanes.arrastra_cada_piloto_de_la_bolsa_a_un_carril_o') %>
+    </p>
+
+    <!-- ── Nº de tandas ───────────────────────────────────────────────── -->
+    <div class="pole-tandas-ctrl">
+      <label for="numTandas"><%= t('pole-lanes.n_de_tandas') %></label>
+      <input type="number" id="numTandas" min="1" max="<%= entries.length %>" value="1" inputmode="numeric">
+      <span class="pole-tandas-hint">
+        <%= t('pole-lanes.reparte_los_clasificados_en_las_tandas_que') %>
+      </span>
+    </div>
+
+    <!-- ── Reparto: bolsa de pilotos + carriles por tanda ─────────────── -->
+    <div class="pole-tandas-panel" id="tandasPanel">
+      <!-- Bolsa de pilotos sin asignar (píldoras, orden de pole) -->
+      <div class="pole-pool" id="poolZone">
+        <div class="pole-pool__hd">
+          <%= t('common.sin_asignar') %>
+          <span class="pole-pool__count" id="poolCount"></span>
+        </div>
+        <div class="pole-pool__pills" id="poolPills"></div>
+      </div>
+
+      <div class="pole-tandas-cols" id="tandasCols"></div>
+    </div>
+
+    <!-- ── Form de submit ─────────────────────────────────────────────── -->
+    <form id="laneForm" action="/races/<%= race.id %>/pole/lanes" method="POST" class="pole-lanes-form">
+      <div id="hiddenInputs"></div>
+      <div id="formActions" class="pole-lanes-actions">
+        <a href="/races/<%= race.id %>/pole/results" class="pole-btn-edit">← <%= t('common.volver') %></a>
+        <button type="submit" class="pole-btn-confirm" id="confirmBtn">
+          🏁 <span id="confirmLbl"><%= t('pole-lanes.crear_la_tanda') %></span>
+        </button>
+      </div>
+    </form>
+
+    <div class="pole-bcast-foot">
+      <%= t('pole-lanes.si_pole_eleccion_de_carril_en_orden_de') %>
+    </div>
+
+  </div>
+</div>
+
+<script>
+const LANG          = "<%= lang %>";
+const ACTIVE_LANES  = <%- JSON.stringify(activeLanes) %>;
+const LANE_COLORS   = <%- JSON.stringify(LANE_COLORS) %>;
+const ENTRIES       = <%- JSON.stringify(entries.map(e => ({ name: e.entity_name }))) %>;
+
+// ── Reparto: bolsa de pilotos + carriles por tanda ──────────────────────────
+// Arriba, una bolsa con los pilotos sin asignar (píldoras, orden de pole). Cada
+// tanda muestra sus CARRILES (ACTIVE_LANES) y sus DESCANSOS (ampliables). Se
+// coloca cada piloto en un carril arrastrando o con clic (piloto→carril). Un
+// piloto ya colocado vuelve a la bolsa al tocarlo. Funciona igual con 1 tanda o
+// con varias. `place[nombre] = {t, lane, restIdx}`: lane>0 carril, lane=0 descanso.
+const numTandasInput = document.getElementById('numTandas');
+const tandasPanel     = document.getElementById('tandasPanel');
+const tandasCols      = document.getElementById('tandasCols');
+const poolPills       = document.getElementById('poolPills');
+const poolZone        = document.getElementById('poolZone');
+const poolCount       = document.getElementById('poolCount');
+const formActions     = document.getElementById('formActions');
+const confirmBtn      = document.getElementById('confirmBtn');
+const confirmLbl      = document.getElementById('confirmLbl');
+const hiddenInputs    = document.getElementById('hiddenInputs');
+const LBL_CREATE_1    = <%- JSON.stringify(t('pole-lanes.crear_la_tanda')) %>;
+const LBL_CREATE_N    = <%- JSON.stringify(t('pole-lanes.crear_las_tandas')) %>;
+const T_REST          = <%- JSON.stringify(t('client.common.descanso')) %>;
+const T_ADDREST       = <%- JSON.stringify(t('common.descanso')) %>;
+const T_TANDA         = <%- JSON.stringify(t('pole-lanes.tanda')) %>;
+const T_CIRCUIT       = <%- JSON.stringify(t('client.common.circuito')) %>;
+// Carriles agrupados por circuito (caja), en orden NUMÉRICO. Con varios circuitos
+// se rotula cada bloque; con uno solo, no.
+const CIRCUITS      = <%- JSON.stringify(circuits) %>;
+const MULTI_CIRCUIT = CIRCUITS.length > 1;
+const N_LANES       = CIRCUITS.reduce((a, c) => a + c.lanes.length, 0);
+const esc = (s) => String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+const posOf = {}; ENTRIES.forEach((e, i) => posOf[e.name] = i + 1);
+
+let place    = {};    // nombre → {t, lane} carril · {t, lane:0, ci, ri} descanso
+let restCount = {};   // t → { circuito → nº de plazas de descanso }
+let selected = null;  // piloto seleccionado por clic (para colocar en el siguiente carril)
+
+function multiN() { return Math.min(ENTRIES.length, Math.max(1, parseInt(numTandasInput.value, 10) || 1)); }
+function unassigned() { return ENTRIES.filter(e => !place[e.name]); }
+// Un descanso se identifica por (tanda, circuito, índice); un carril, por (tanda, carril).
+function occupant(t, lane, ci, ri) {
+  return ENTRIES.find(e => {
+    const p = place[e.name];
+    if (!p || p.t !== t) return false;
+    return (lane !== 0) ? (p.lane === lane) : (p.lane === 0 && p.ci === ci && p.ri === ri);
+  });
+}
+function restsOf(t, ci) { return (restCount[t] && restCount[t][ci]) || 0; }
+
+function pillHTML(name, extraClass) {
+  const i = posOf[name] - 1;
+  const color = LANE_COLORS[i % LANE_COLORS.length];
+  return `<div class="pole-pill${extraClass ? ' ' + extraClass : ''}${selected === name ? ' is-selected' : ''}"
+       draggable="true" data-name="${esc(name)}">
+    <span class="pole-pill__dot" style="background:${color}"></span>
+    <span class="pole-pill__pos">P${posOf[name]}</span>
+    <span class="pole-pill__name">${esc(name)}</span>
+  </div>`;
+}
+
+function render() {
+  const n = multiN();
+  // Bolsa
+  const libres = unassigned();
+  poolPills.innerHTML = libres.map(e => pillHTML(e.name)).join('') ||
+    `<span class="pole-pool__empty">${I18N.t('client.pole-lanes.todos_colocados')}</span>`;
+  poolCount.textContent = libres.length;
+
+  // Un carril
+  const laneSlot = (t, lane) => {
+    const occ = occupant(t, lane, null);
+    return `<div class="pole-slot${occ ? ' is-filled' : ''}" data-t="${t}" data-lane="${lane}">
+      <span class="pole-slot__lane" style="--lane-color:${LANE_COLORS[lane-1]}">${lane}</span>
+      <div class="pole-slot__drop">${occ ? pillHTML(occ.name, 'in-slot') : `<span class="pole-slot__empty"></span>`}</div>
+    </div>`;
+  };
+  // Una plaza de descanso (pertenece a un circuito, va ENCIMA de sus carriles).
+  // Si hay más de uno en el circuito, se numera "Descanso i/n" para distinguirlos.
+  const restSlot = (t, ci, ri, total) => {
+    const occ = occupant(t, 0, ci, ri);
+    const etq = total > 1 ? `${T_REST} ${ri + 1}/${total}` : T_REST;
+    return `<div class="pole-slot pole-slot--rest${occ ? ' is-filled' : ''}" data-t="${t}" data-lane="0" data-ci="${ci}" data-rest="${ri}">
+      <span class="pole-slot__lane pole-slot__lane--rest">💤</span>
+      <div class="pole-slot__drop">${occ ? pillHTML(occ.name, 'in-slot') : `<span class="pole-slot__empty">${etq}</span>`}</div>
+    </div>`;
+  };
+
+  // Tandas
+  tandasCols.innerHTML = '';
+  for (let t = 1; t <= n; t++) {
+    if (restCount[t] == null) restCount[t] = {};
+    const col = document.createElement('div');
+    col.className = 'pole-tanda-col' + (MULTI_CIRCUIT ? ' pole-tanda-col--multi' : '');
+
+    // Un bloque por circuito, en orden numérico. Con varias cajas se rotula
+    // "Circuito N". Los DESCANSOS de cada circuito van ARRIBA, encima del primer
+    // carril, con su propio "+ descanso".
+    const circuitsHTML = CIRCUITS.map(circ => {
+      const nr = restsOf(t, circ.index);
+      let restsHTML = '';
+      for (let ri = 0; ri < nr; ri++) restsHTML += restSlot(t, circ.index, ri, nr);
+      const lanesHTML = circ.lanes.map(lane => laneSlot(t, lane)).join('');
+      return `<div class="pole-circuit-group">
+        ${MULTI_CIRCUIT ? `<div class="pole-circuit-hd">${T_CIRCUIT} ${circ.index}</div>` : ''}
+        <button type="button" class="pole-addrest" data-t="${t}" data-ci="${circ.index}">${T_ADDREST}</button>
+        <div class="pole-tanda-slots">${restsHTML}${lanesHTML}</div>
+      </div>`;
+    }).join('');
+
+    const nPilots = ENTRIES.filter(e => place[e.name]?.t === t).length;
+    col.innerHTML =
+      `<div class="pole-tanda-col__hd">${T_TANDA} ${t}<span class="pole-tanda-col__count">${nPilots}</span></div>
+       <div class="pole-tanda-circuits">${circuitsHTML}</div>`;
+    tandasCols.appendChild(col);
+  }
+
+  // El botón "Crear las tandas" solo se habilita con TODOS colocados.
+  const todos = libres.length === 0;
+  confirmBtn.disabled = !todos;
+  confirmBtn.classList.toggle('is-disabled', !todos);
+}
+
+// Lee (t, lane, ci, ri) de un hueco del DOM.
+function slotCoords(slot) {
+  return [
+    +slot.dataset.t,
+    +slot.dataset.lane,
+    slot.dataset.ci   != null ? +slot.dataset.ci   : null,
+    slot.dataset.rest != null ? +slot.dataset.rest : null,
+  ];
+}
+// Coloca `name` en un hueco. Si ya tenía otro, ese vuelve a la bolsa.
+function placeAt(name, t, lane, ci, ri) {
+  const prev = occupant(t, lane, ci, ri);
+  if (prev && prev.name !== name) delete place[prev.name];
+  place[name] = (lane === 0) ? { t, lane: 0, ci, ri } : { t, lane };
+  if (selected === name) selected = null;
+  render();
+}
+function toPool(name) { delete place[name]; render(); }
+
+// ── Clic: seleccionar piloto / colocar / devolver ──
+tandasPanel.addEventListener('click', e => {
+  const addrest = e.target.closest('.pole-addrest');
+  if (addrest) {
+    const t = +addrest.dataset.t, ci = +addrest.dataset.ci;
+    restCount[t] = restCount[t] || {};
+    restCount[t][ci] = (restCount[t][ci] || 0) + 1;
+    render(); return;
+  }
+
+  const pill = e.target.closest('.pole-pill');
+  const slot = e.target.closest('.pole-slot');
+
+  if (pill && pill.closest('#poolPills')) {          // píldora de la bolsa → seleccionar
+    const name = pill.dataset.name;
+    selected = (selected === name) ? null : name;
+    render();
+    return;
+  }
+  if (pill && pill.closest('.pole-slot')) {          // píldora en un hueco → a la bolsa
+    toPool(pill.dataset.name);
+    return;
+  }
+  if (slot && selected) {                            // hueco con un piloto seleccionado → colocar
+    placeAt(selected, ...slotCoords(slot));
+    return;
+  }
+});
+
+// ── Arrastrar y soltar ──
+let dragName = null;
+tandasPanel.addEventListener('dragstart', e => {
+  const pill = e.target.closest('.pole-pill');
+  if (!pill) return;
+  dragName = pill.dataset.name;
+  e.dataTransfer.effectAllowed = 'move';
+  try { e.dataTransfer.setData('text/plain', dragName); } catch {}
+});
+tandasPanel.addEventListener('dragover', e => {
+  if (dragName == null) return;
+  if (e.target.closest('.pole-slot') || e.target.closest('#poolZone')) { e.preventDefault(); e.dataTransfer.dropEffect = 'move'; }
+});
+tandasPanel.addEventListener('drop', e => {
+  if (dragName == null) return;
+  const slot = e.target.closest('.pole-slot');
+  const pool = e.target.closest('#poolZone');
+  if (slot) { e.preventDefault(); placeAt(dragName, ...slotCoords(slot)); }
+  else if (pool) { e.preventDefault(); toPool(dragName); }
+  dragName = null;
+});
+
+function buildMultiForm(n) {
+  hiddenInputs.innerHTML = '';
+  const addHidden = (name, value) => {
+    const inp = document.createElement('input');
+    inp.type = 'hidden'; inp.name = name; inp.value = value;
+    hiddenInputs.appendChild(inp);
+  };
+  addHidden('num_tandas', String(n));
+  // slot[nombre] = "tanda:carril"  (carril 0 = descanso)
+  ENTRIES.forEach(e => {
+    const p = place[e.name];
+    if (p) addHidden('slot[' + e.name + ']', p.t + ':' + p.lane);
+  });
+}
+
+// Reparte el campo al cambiar el nº de tandas: todos vuelven a la bolsa y se
+// re-crean las tandas vacías. Funciona igual con N=1 (una sola tanda con sus
+// carriles) que con N>1.
+function onNumTandasChange() {
+  const n = multiN();
+  numTandasInput.value = n;
+  confirmLbl.textContent = (n > 1) ? LBL_CREATE_N : LBL_CREATE_1;
+  place = {}; selected = null; restCount = {};
+  // Descansos iniciales: los que define la SECUENCIA de la carrera (los ceros),
+  // repartidos por circuito. Cada tanda arranca con ese mismo reparto; se pueden
+  // añadir más con "+ descanso".
+  for (let t = 1; t <= n; t++) {
+    restCount[t] = {};
+    CIRCUITS.forEach(c => { if (c.rests) restCount[t][c.index] = c.rests; });
+  }
+  render();
+}
+
+numTandasInput.addEventListener('input', onNumTandasChange);
+
+// Deep-link: ?tandas=N pre-selecciona el nº de tandas.
+const _qTandas = parseInt(new URLSearchParams(location.search).get('tandas'), 10);
+if (_qTandas >= 1) numTandasInput.value = Math.min(ENTRIES.length, _qTandas);
+onNumTandasChange();   // pinta la bolsa + carriles al cargar
+
+document.getElementById('laneForm').addEventListener('submit', (e) => {
+  if (unassigned().length > 0) { e.preventDefault(); return; }   // exige colocarlos a todos
+  buildMultiForm(multiN());
+});
+</script>
+
+<%- include('../partials/footer') %>

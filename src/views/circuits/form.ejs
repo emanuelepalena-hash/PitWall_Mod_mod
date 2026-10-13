@@ -1,0 +1,980 @@
+<%
+  const isEdit = !!circuit;
+  const formTitle = isEdit
+    ? (t('form.editar_escenario'))
+    : (t('common.nuevo_escenario'));
+  const formAction = isEdit ? '/circuits/' + circuit.id : '/circuits';
+  const CIRCUIT_COLORS = ['#e63946','#2196f3','#4caf50','#ff9800','#9c27b0','#00bcd4'];
+%>
+<%- include('../partials/header', { pageTitle: formTitle }) %>
+<div class="vt-page vt-page--circuits-form">
+  <div class="vt-wrap vt-wrap--narrow">
+
+  <a href="/circuits" class="vt-back-link">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M19 12H5M12 19l-7-7 7-7"/></svg>
+    <%= t('form.volver_a_escenarios') %>
+  </a>
+  <h1><%= formTitle %></h1>
+
+  <% if (errors.length > 0) { %>
+    <div class="vt-alert" style="margin-top:16px">
+      <% errors.forEach(e => { %>
+        <p>
+          <% if (e === 'name_required') { %><%= t('form.el_nombre_es_obligatorio_minimo_2_caracteres') %>
+          <% } else if (e === 'lanes_invalid') { %><%= t('form.numero_de_carriles_no_valido_2_8_por_circuito') %>
+          <% } else { %><%= e %><% } %>
+        </p>
+      <% }) %>
+    </div>
+  <% } %>
+
+  <form action="<%= formAction %>" method="POST" class="vt-panel">
+
+    <div class="form-group">
+      <label class="form-label" for="cName"><%= t('common.nombre') %></label>
+      <input class="form-input <%= errors.includes('name_required') ? 'form-input--error' : '' %>"
+             type="text" id="cName" name="name"
+             placeholder="<%= t('form.ej_pista_principal') %>"
+             value="<%= body.name || '' %>" autocomplete="off" autofocus required>
+    </div>
+
+    <div class="form-group">
+      <label class="form-label">
+        <%= t('form.configuracion_de_carriles') %>
+      </label>
+
+      <div style="display:flex;align-items:center;gap:.75rem;margin-bottom:1rem">
+        <span class="form-hint" style="flex-shrink:0">
+          <%= t('form.numero_de_circuitos') %>
+        </span>
+        <div class="circ-pills" id="circPills">
+          <% for (let i = 1; i <= 6; i++) { %>
+            <button type="button" class="circ-pill<%= (parseInt(body.circuits_count)||1) === i ? ' active' : '' %>"
+                    data-n="<%= i %>"><%= i %></button>
+          <% } %>
+        </div>
+        <input type="hidden" name="circuits_count" id="circuitsCount" value="<%= body.circuits_count || 1 %>">
+      </div>
+
+      <div class="circuits-grid" id="circuitsGrid">
+        <% for (let i = 1; i <= 6; i++) { %>
+          <div class="circuit-cfg-row" data-idx="<%= i %>"
+               style="<%= (parseInt(body.circuits_count)||1) < i ? 'display:none' : '' %>">
+            <span class="circuit-num-badge" style="background:<%= CIRCUIT_COLORS[i-1] %>">C<%= i %></span>
+            <input class="form-input form-input--sm <%= errors.includes('lanes_invalid') ? 'form-input--error' : '' %>"
+                   type="number" name="circuit_lanes_<%= i %>" id="circLanes_<%= i %>"
+                   min="2" max="8" value="<%= body['circuit_lanes_' + i] || (i === 1 ? 6 : 4) %>">
+            <span class="form-hint"><%= t('client.common.carriles') %></span>
+          </div>
+        <% } %>
+      </div>
+
+      <div class="circuits-total">
+        <span class="form-hint"><%= t('form.total') %></span>
+        <strong id="totalLanesDisplay" style="color:#58a6ff">—</strong>
+        <span class="form-hint"> <%= t('client.common.carriles') %></span>
+      </div>
+    </div>
+
+    <div class="form-group">
+      <label class="form-label">
+        <%= t('form.secuencia_de_carriles_rotacion') %>
+      </label>
+      <p class="form-hint" style="margin-bottom:.5rem">
+        <%= t('form.arrastra_para_reordenar_esta_secuencia') %>
+      </p>
+      <div id="seqLanes" class="seq-lanes-edit" style="display:flex;flex-wrap:wrap;gap:.5rem;padding:.6rem;background:#000000;border:1px solid #21262d;border-radius:6px;min-height:3.5rem"></div>
+      <input type="hidden" name="lane_sequence" id="laneSequenceInput" value="<%= body.lane_sequence || '' %>">
+      <div style="display:flex;gap:.5rem;margin-top:.5rem;flex-wrap:wrap">
+        <button type="button" id="btnAddRest" class="btn btn--ghost btn--sm">
+          + <%= t('form.anadir_descanso_dsc') %>
+        </button>
+        <button type="button" id="btnSmartSeq" class="btn btn--ghost btn--sm">
+          ⚡ <%= t('form.distribucion_automatica') %>
+        </button>
+        <button type="button" id="btnResetSeq" class="btn btn--ghost btn--sm">
+          ↺ <%= t('form.restablecer') %>
+        </button>
+      </div>
+      <p class="form-hint" style="margin-top:.4rem">
+        <%= t('form.los_descansos_dsc_se_usan_cuando_una_carrera') %>
+      </p>
+    </div>
+
+    <%
+      const gLaneColors = globalLaneColors();
+      const lcCustom = body.lane_colors_custom === '1';
+    %>
+    <div class="form-group">
+      <label class="form-label">
+        <%= t('form.colores_de_los_carriles') %>
+      </label>
+      <label style="display:flex;align-items:center;gap:.55rem;cursor:pointer;margin-bottom:.6rem">
+        <input type="checkbox" id="laneColorsCustom" name="lane_colors_custom" value="1" <%= lcCustom ? 'checked' : '' %>>
+        <span><%= t('form.usar_colores_propios_en_este_circuito') %></span>
+      </label>
+      <div class="lc-grid<%= lcCustom ? '' : ' is-disabled' %>" id="laneColorsGrid">
+        <% for (let i = 1; i <= 32; i++) {
+             const c = (lcCustom && body['lane_color_' + i]) || gLaneColors[i - 1]; %>
+          <label class="lc-swatch" data-lane="<%= i %>" style="background:<%= c %>;color:<%= laneInk(c) %>">
+            <%= i %>
+            <input type="color" name="lane_color_<%= i %>" value="<%= c %>" aria-label="<%= (t('common.color_del_carril')) + i %>">
+          </label>
+        <% } %>
+      </div>
+      <div class="lc-actions">
+        <button type="button" id="btnLaneColorsGlobal" class="btn btn--ghost btn--sm" <%= lcCustom ? '' : 'disabled' %>>
+          ↺ <%= t('form.copiar_los_colores_globales') %>
+        </button>
+      </div>
+      <p class="form-hint" style="margin-top:.4rem">
+        <%= t('form.sin_marcar_el_circuito_usa_los_colores_globales') %>
+      </p>
+    </div>
+
+    <div class="form-group">
+      <label class="form-label" for="minLapS">
+        <%= t('form.vuelta_minima_por_defecto_segundos') %>
+      </label>
+      <div class="input-row">
+        <input class="form-input form-input--sm"
+               type="number" id="minLapS" name="min_lap_s" step="0.01" min="0" max="999"
+               placeholder="<%= t('form.ej_3_50') %>"
+               value="<%= body.min_lap_s || '' %>">
+        <span class="form-hint">s</span>
+      </div>
+      <p class="form-hint" style="margin-top:.35rem">
+        <%= t('form.se_usa_cuando_una_carrera_no_tiene_tiempo') %>
+      </p>
+    </div>
+
+    <div class="form-group">
+      <label class="form-label">
+        <%= t('form.vueltas_minimas_por_categoria_opcional') %>
+      </label>
+      <p class="form-hint" style="margin-bottom:.6rem">
+        <%= t('form.sobrescribe_el_tiempo_por_defecto_cuando_la') %>
+      </p>
+
+      <div id="categoryGrid" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:.6rem">
+        <% (categories || []).forEach(cat => { %>
+          <div class="cat-row" data-cat-id="<%= cat.id %>" style="display:flex;align-items:center;gap:.5rem;background:#000000;border:1px solid #21262d;border-radius:6px;padding:.5rem .7rem">
+            <span style="flex:1;font-weight:600;font-size:.95rem"><%= cat.name %></span>
+            <input class="form-input form-input--sm"
+                   type="number" step="0.01" min="0" max="999"
+                   name="category_min_lap_s_<%= cat.id %>"
+                   placeholder="—"
+                   style="width:5.5rem"
+                   value="<%= body['category_min_lap_s_' + cat.id] || '' %>">
+            <span class="form-hint">s</span>
+          </div>
+        <% }) %>
+      </div>
+
+      <% if (!categories || categories.length === 0) { %>
+        <p id="catEmpty" class="form-hint" style="margin:.6rem 0">
+          <%= t('form.no_hay_categorias_todavia_crea_una_abajo_para') %>
+        </p>
+      <% } %>
+
+      <!-- Inline create category -->
+      <div style="display:flex;gap:.5rem;align-items:center;margin-top:.6rem;flex-wrap:wrap">
+        <input id="newCatName" type="text" class="form-input form-input--sm"
+               placeholder="<%= t('form.nombre_de_categoria_p_ej_gt_grupo_c') %>"
+               style="flex:1;min-width:200px" maxlength="40" autocomplete="off">
+        <button type="button" id="btnAddCategory" class="btn btn--ghost btn--sm">
+          + <%= t('form.crear_categoria') %>
+        </button>
+      </div>
+      <p id="catFeedback" class="form-hint" style="margin-top:.35rem;display:none"></p>
+    </div>
+
+    <div class="form-group">
+      <label class="form-label" for="cDesc">
+        <%= t('form.notas_opcional') %>
+      </label>
+      <input class="form-input" type="text" id="cDesc" name="description"
+             placeholder="<%= t('form.descripcion_o_ubicacion') %>"
+             value="<%= body.description || '' %>">
+    </div>
+
+    <!-- ── Trazado del circuito (opcional) ─────────────────────────────── -->
+    <details class="form-group" <%= (isEdit && circuit && circuit.track_image_b64) ? 'open' : '' %>>
+      <summary style="cursor:pointer; padding:.6rem 0; font-weight:600; color:#c9d1d9">
+        🗺 <%= t('form.trazado_del_circuito_minimapa') %>
+      </summary>
+      <p class="form-hint" style="margin:.4rem 0 .8rem">
+        <%= t('form.sube_una_foto_cenital_del_circuito_y_clicka') %>
+      </p>
+
+      <input type="file" id="trackImageInput" accept="image/*" style="position:absolute;left:-9999px">
+      <div style="display:flex; gap:.5rem; flex-wrap:wrap; margin-bottom:.6rem; align-items:center">
+        <button type="button" id="trackBtnUpload" class="btn btn--primary btn--sm">
+          📷 <%= t('form.subir_foto_del_circuito') %>
+        </button>
+        <button type="button" id="trackBtnBlank" class="btn btn--ghost btn--sm">
+          ✏️ <%= t('form.dibujar_sin_foto') %>
+        </button>
+        <button type="button" id="trackBtnTrace" class="btn btn--ghost btn--sm" title="<%= t('form.manten_el_raton_pulsado_y_arrastra_para_trazar') %>" disabled>✏️ <%= t('form.trazar_a_mano_alzada') %></button>
+        <button type="button" id="trackBtnSmooth" class="btn btn--ghost btn--sm" title="<%= t('form.mostrar_curva_suave_catmull_rom_para') %>" disabled>~ <%= t('form.vista_suave') %></button>
+        <button type="button" id="trackBtnUndo" class="btn btn--ghost btn--sm" title="<%= t('form.deshacer_ultimo_punto') %>" disabled>↶ <%= t('form.deshacer') %></button>
+        <button type="button" id="trackBtnClose" class="btn btn--ghost btn--sm" disabled><%= t('form.cerrar_abrir_trazado') %></button>
+        <button type="button" id="trackBtnClear" class="btn btn--ghost btn--sm" disabled><%= t('form.limpiar_puntos') %></button>
+        <button type="button" id="trackBtnRemoveImg" class="btn btn--ghost btn--sm" style="color:#e63946" disabled><%= t('form.quitar_imagen') %></button>
+        <span id="trackPointCount" class="form-hint" style="margin-left:auto"></span>
+      </div>
+
+      <div id="trackCanvasWrap" style="position:relative; max-width:760px; border:1px dashed #30363d; border-radius:8px; background:#000; display:flex; align-items:center; justify-content:center; min-height:200px; overflow:hidden">
+        <canvas id="trackCanvas" style="display:block; max-width:100%; height:auto; cursor:crosshair"></canvas>
+        <div id="trackPlaceholder" style="color:#c9d1d9; padding:2.5rem 1rem; text-align:center">
+          <div style="font-size:2.5rem; opacity:.5; margin-bottom:.6rem">📷</div>
+          <div style="font-size:1rem; font-weight:600">
+            <%= t('form.elige_como_crear_el_trazado') %>
+          </div>
+          <div style="font-size:.85rem; color:#8b949e; margin-top:.4rem; line-height:1.5">
+            <%= t('form.subir_foto_pon_una_imagen_cenital_de_fondo') %><br>
+            <%= t('form.dibujar_sin_foto_empieza_con_un_lienzo_en_negro') %>
+          </div>
+        </div>
+      </div>
+
+      <p class="form-hint" style="margin-top:.5rem; font-size:.8rem; line-height:1.55">
+        <%= t('form.b_click_izquierdo_b_anadir_punto_si_haces_click') %>
+      </p>
+      <p class="form-hint" style="margin-top:.3rem; font-size:.8rem; line-height:1.55">
+        <%= t('form.para_curvas_pulsa_b_vista_suave_b_para_ver_como') %>
+      </p>
+
+      <!-- ── Sentido del circuito ─────────────────────────────────────── -->
+      <%
+        const trackDir = (typeof body !== 'undefined' && body && body.track_direction)
+          ? body.track_direction
+          : ((isEdit && circuit && circuit.track_direction) ? circuit.track_direction : 'cw');
+      %>
+      <div class="form-group" style="margin-top:1.1rem">
+        <label class="form-label" style="display:block;margin-bottom:.6rem">
+          <%= t('form.sentido_del_circuito') %>
+        </label>
+        <div class="dir-opts">
+          <label class="dir-opt <%= trackDir !== 'ccw' ? 'is-sel' : '' %>" data-dir="cw">
+            <input type="radio" name="track_direction" value="cw" <%= trackDir !== 'ccw' ? 'checked' : '' %>>
+            <svg class="dir-opt__ico" viewBox="0 0 48 48" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M40 24a16 16 0 1 1-4.7-11.3"/>
+              <path d="M40 6v8h-8"/>
+            </svg>
+            <div class="dir-opt__txt">
+              <div class="dir-opt__t"><%= t('form.horario') %></div>
+              <div class="dir-opt__d"><%= t('form.sentido_de_las_agujas_del_reloj') %></div>
+            </div>
+          </label>
+          <label class="dir-opt <%= trackDir === 'ccw' ? 'is-sel' : '' %>" data-dir="ccw">
+            <input type="radio" name="track_direction" value="ccw" <%= trackDir === 'ccw' ? 'checked' : '' %>>
+            <svg class="dir-opt__ico" viewBox="0 0 48 48" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M8 24a16 16 0 1 0 4.7-11.3"/>
+              <path d="M8 6v8h8"/>
+            </svg>
+            <div class="dir-opt__txt">
+              <div class="dir-opt__t"><%= t('form.antihorario') %></div>
+              <div class="dir-opt__d"><%= t('form.contra_las_agujas_del_reloj') %></div>
+            </div>
+          </label>
+        </div>
+        <p class="form-hint" style="margin-top:.5rem">
+          <%= t('form.indica_en_que_sentido_recorren_los_coches_el') %>
+        </p>
+      </div>
+
+      <input type="hidden" name="track_image_b64" id="trackImageB64Input"
+             value="<%= (isEdit && circuit) ? (circuit.track_image_b64 || '') : '' %>">
+      <input type="hidden" name="track_outline_json" id="trackOutlineJsonInput"
+             value='<%= (isEdit && circuit) ? (circuit.track_outline_json || "[]") : "[]" %>'>
+    </details>
+
+    <div class="vt-form-actions">
+      <a href="/circuits" class="vt-btn vt-btn--ghost"><%= t('client.common.cancelar') %></a>
+      <button type="submit" class="vt-btn vt-btn--primary">
+        <%= isEdit ? (t('common.guardar_cambios')) : (t('common.crear_escenario')) %>
+      </button>
+    </div>
+
+  </form>
+  </div>
+</div>
+
+<!-- ── Track outline editor — vanilla JS, autoinit cuando el details se abre ──── -->
+<script>
+(function () {
+  const canvas       = document.getElementById('trackCanvas');
+  const wrap         = document.getElementById('trackCanvasWrap');
+  const placeholder  = document.getElementById('trackPlaceholder');
+  const fileInput    = document.getElementById('trackImageInput');
+  const imgInput     = document.getElementById('trackImageB64Input');
+  const outlineInput = document.getElementById('trackOutlineJsonInput');
+  const btnUpload    = document.getElementById('trackBtnUpload');
+  const btnUndo      = document.getElementById('trackBtnUndo');
+  const btnClose     = document.getElementById('trackBtnClose');
+  const btnClear     = document.getElementById('trackBtnClear');
+  const btnRemoveImg = document.getElementById('trackBtnRemoveImg');
+  const btnTrace     = document.getElementById('trackBtnTrace');
+  const btnSmooth    = document.getElementById('trackBtnSmooth');
+  const countLabel   = document.getElementById('trackPointCount');
+  if (!canvas) return;
+
+  const ctx = canvas.getContext('2d');
+  let img      = null;            // Image obj cargada (null en modo lienzo blanco)
+  let blank    = false;           // true → lienzo sin imagen
+  const BLANK_W = 1000, BLANK_H = 600;
+  let points   = [];              // [[x_rel, y_rel], ...]   0..1
+  let closed   = true;
+  let dragIdx  = -1;
+  let traceMode = false;          // trazado a mano alzada (drag continuo)
+  let showSmooth = true;          // preview Catmull-Rom
+  let isTracing = false;          // mouse pulsado en modo trace
+  const HIT_R   = 12;             // radio de hit en px CSS para puntos
+  const SEG_HIT_R = 8;            // distancia para insertar sobre un segmento
+  const TRACE_MIN_DIST_PX = 22;   // distancia mínima entre puntos en modo trace
+  const LANG   = "<%= lang %>";
+
+  function hasCanvas() { return !!img || blank; }
+
+  function setPlaceholderVisible(visible) {
+    placeholder.style.display = visible ? 'block' : 'none';
+    canvas.style.display      = visible ? 'none'  : 'block';
+    [btnUndo, btnClose, btnClear, btnRemoveImg, btnTrace, btnSmooth].forEach(b => { if (b) b.disabled = visible; });
+  }
+
+  function updateCount() {
+    countLabel.textContent = points.length + ' ' + (I18N.t('client.form.puntos'));
+  }
+
+  function sync() {
+    outlineInput.value = JSON.stringify(points);
+    updateCount();
+  }
+
+  // ── Catmull-Rom centrípeto para previsualización ─────────────────────
+  const SAMPLES_PER_SEG = 14;
+  function catmullRom(p0, p1, p2, p3, t) {
+    const t2 = t * t, t3 = t2 * t;
+    return [
+      0.5 * ((2 * p1[0]) + (-p0[0] + p2[0]) * t + (2 * p0[0] - 5 * p1[0] + 4 * p2[0] - p3[0]) * t2 + (-p0[0] + 3 * p1[0] - 3 * p2[0] + p3[0]) * t3),
+      0.5 * ((2 * p1[1]) + (-p0[1] + p2[1]) * t + (2 * p0[1] - 5 * p1[1] + 4 * p2[1] - p3[1]) * t2 + (-p0[1] + 3 * p1[1] - 3 * p2[1] + p3[1]) * t3),
+    ];
+  }
+  function smoothPath(pts, isClosed) {
+    if (pts.length < 3) return pts.slice();
+    const N = pts.length;
+    const out = [];
+    const upto = isClosed ? N : N - 1;
+    for (let i = 0; i < upto; i++) {
+      const p0 = pts[isClosed ? (i - 1 + N) % N : Math.max(0, i - 1)];
+      const p1 = pts[i];
+      const p2 = pts[isClosed ? (i + 1) % N : Math.min(N - 1, i + 1)];
+      const p3 = pts[isClosed ? (i + 2) % N : Math.min(N - 1, i + 2)];
+      for (let s = 0; s < SAMPLES_PER_SEG; s++) out.push(catmullRom(p0, p1, p2, p3, s / SAMPLES_PER_SEG));
+    }
+    return out;
+  }
+
+  function draw() {
+    if (!hasCanvas()) return;
+    if (img) {
+      canvas.width  = img.naturalWidth;
+      canvas.height = img.naturalHeight;
+      ctx.drawImage(img, 0, 0);
+    } else {
+      canvas.width  = BLANK_W;
+      canvas.height = BLANK_H;
+      ctx.fillStyle = '#0a0a0a';
+      ctx.fillRect(0, 0, canvas.width, canvas.height);
+      ctx.strokeStyle = 'rgba(255,255,255,.05)';
+      ctx.lineWidth = 1;
+      for (let x = 0; x < canvas.width;  x += 50) { ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x, canvas.height); ctx.stroke(); }
+      for (let y = 0; y < canvas.height; y += 50) { ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(canvas.width,  y); ctx.stroke(); }
+    }
+
+    if (points.length === 0) return;
+
+    // 1) Curva suave (preview de cómo se verá en la simulación)
+    if (showSmooth && points.length >= 3) {
+      const sm = smoothPath(points, closed);
+      ctx.beginPath();
+      sm.forEach(([x, y], i) => {
+        const px = x * canvas.width, py = y * canvas.height;
+        if (i === 0) ctx.moveTo(px, py); else ctx.lineTo(px, py);
+      });
+      if (closed) ctx.closePath();
+      ctx.lineWidth   = Math.max(5, canvas.width / 220);
+      ctx.strokeStyle = 'rgba(56,189,248,.55)';
+      ctx.stroke();
+    }
+
+    // 2) Polilínea de control (rectos entre puntos)
+    ctx.lineWidth   = Math.max(2, canvas.width / 600);
+    ctx.strokeStyle = showSmooth ? 'rgba(251,191,36,.6)' : '#fbbf24';
+    ctx.setLineDash(showSmooth ? [6, 5] : []);
+    ctx.beginPath();
+    points.forEach(([x, y], i) => {
+      const px = x * canvas.width;
+      const py = y * canvas.height;
+      if (i === 0) ctx.moveTo(px, py);
+      else         ctx.lineTo(px, py);
+    });
+    if (closed && points.length > 2) ctx.closePath();
+    ctx.stroke();
+    ctx.setLineDash([]);
+
+    // 3) Puntos
+    const r = Math.max(4, canvas.width / 220);
+    points.forEach(([x, y], i) => {
+      const px = x * canvas.width;
+      const py = y * canvas.height;
+      ctx.beginPath();
+      ctx.arc(px, py, r, 0, Math.PI * 2);
+      ctx.fillStyle = (i === 0) ? '#3fb950' : '#fbbf24';
+      ctx.fill();
+      ctx.lineWidth = 1.5;
+      ctx.strokeStyle = '#000';
+      ctx.stroke();
+    });
+  }
+
+  function eventToPx(e) {
+    const rect = canvas.getBoundingClientRect();
+    const sx = canvas.width  / rect.width;
+    const sy = canvas.height / rect.height;
+    return { x: (e.clientX - rect.left) * sx, y: (e.clientY - rect.top) * sy, rect };
+  }
+
+  function pickPoint(e) {
+    const { x, y, rect } = eventToPx(e);
+    const sx = canvas.width  / rect.width;
+    const hitRpx = HIT_R * sx;
+    for (let i = points.length - 1; i >= 0; i--) {
+      const px = points[i][0] * canvas.width;
+      const py = points[i][1] * canvas.height;
+      if (Math.hypot(px - x, py - y) <= hitRpx) return i;
+    }
+    return -1;
+  }
+
+  // Devuelve { index, t } del segmento más cercano si está dentro de SEG_HIT_R,
+  // o null. `index` = índice del segmento i→i+1; nuevo punto se inserta en i+1.
+  function pickSegment(e) {
+    if (points.length < 2) return null;
+    const { x, y, rect } = eventToPx(e);
+    const sx = canvas.width  / rect.width;
+    const limitPx = SEG_HIT_R * sx;
+    let best = null;
+    const N = points.length;
+    const maxI = closed ? N : N - 1;
+    for (let i = 0; i < maxI; i++) {
+      const ax = points[i][0] * canvas.width;
+      const ay = points[i][1] * canvas.height;
+      const bx = points[(i + 1) % N][0] * canvas.width;
+      const by = points[(i + 1) % N][1] * canvas.height;
+      const dx = bx - ax, dy = by - ay;
+      const len2 = dx * dx + dy * dy;
+      if (len2 < 1) continue;
+      let t = ((x - ax) * dx + (y - ay) * dy) / len2;
+      t = Math.max(0, Math.min(1, t));
+      const cx = ax + t * dx, cy = ay + t * dy;
+      const d = Math.hypot(cx - x, cy - y);
+      if (d <= limitPx && (!best || d < best.d)) best = { index: i, t, d, cx, cy };
+    }
+    return best;
+  }
+
+  let lastTracePx = null;
+  canvas.addEventListener('mousedown', (e) => {
+    if (!hasCanvas() || e.button !== 0) return;
+
+    // Modo trace: arrastrar pintando puntos a intervalos
+    if (traceMode) {
+      isTracing = true;
+      const { x, y } = eventToPx(e);
+      points.push([x / canvas.width, y / canvas.height]);
+      lastTracePx = { x, y };
+      sync(); draw();
+      return;
+    }
+
+    // Click sobre punto existente → arrastrar para mover
+    const idx = pickPoint(e);
+    if (idx >= 0) { dragIdx = idx; return; }
+
+    // Click sobre la línea entre dos puntos → insertar ahí
+    const seg = pickSegment(e);
+    if (seg) {
+      points.splice(seg.index + 1, 0, [seg.cx / canvas.width, seg.cy / canvas.height]);
+      sync(); draw();
+      return;
+    }
+
+    // Sino → añadir al final
+    const { x, y } = eventToPx(e);
+    points.push([x / canvas.width, y / canvas.height]);
+    sync(); draw();
+  });
+
+  canvas.addEventListener('mousemove', (e) => {
+    // Modo trace activo
+    if (isTracing) {
+      const { x, y } = eventToPx(e);
+      const sx = canvas.width / canvas.getBoundingClientRect().width;
+      const minDistPx = TRACE_MIN_DIST_PX * sx;
+      if (!lastTracePx || Math.hypot(x - lastTracePx.x, y - lastTracePx.y) >= minDistPx) {
+        points.push([x / canvas.width, y / canvas.height]);
+        lastTracePx = { x, y };
+        sync(); draw();
+      }
+      return;
+    }
+    // Arrastre de punto
+    if (dragIdx < 0) return;
+    const { x, y } = eventToPx(e);
+    points[dragIdx] = [
+      Math.max(0, Math.min(1, x / canvas.width)),
+      Math.max(0, Math.min(1, y / canvas.height)),
+    ];
+    sync(); draw();
+  });
+  function endDrag() { dragIdx = -1; isTracing = false; lastTracePx = null; }
+  canvas.addEventListener('mouseup',   endDrag);
+  canvas.addEventListener('mouseleave', endDrag);
+
+  // Cursor dinámico según modo
+  function updateCursor() {
+    canvas.style.cursor = traceMode ? 'crosshair' : 'crosshair';
+  }
+  updateCursor();
+
+  canvas.addEventListener('contextmenu', (e) => {
+    e.preventDefault();
+    if (!hasCanvas()) return;
+    const idx = pickPoint(e);
+    if (idx >= 0) {
+      points.splice(idx, 1);
+      sync(); draw();
+    }
+  });
+
+  btnUpload.addEventListener('click', () => fileInput.click());
+
+  document.getElementById('trackBtnBlank').addEventListener('click', () => {
+    img = null;
+    blank = true;
+    imgInput.value = '__CLEAR__';
+    setPlaceholderVisible(false);
+    draw();
+  });
+
+  btnUndo.addEventListener('click', () => {
+    if (points.length === 0) return;
+    points.pop();
+    sync(); draw();
+  });
+  btnClose.addEventListener('click', () => { closed = !closed; draw(); });
+  btnClear.addEventListener('click', () => {
+    if (points.length === 0) return;
+    if (!confirm(I18N.t('client.form.borrar_todos_los_puntos_del_trazado'))) return;
+    points = []; sync(); draw();
+  });
+
+  // Quitar imagen — SOLO la imagen. Los puntos se conservan: pasamos a
+  // modo "lienzo en blanco" para que el trazado siga visible y editable.
+  btnRemoveImg.addEventListener('click', () => {
+    if (!confirm(I18N.t('client.form.quitar_la_imagen_del_circuito_el_trazado_se'))) return;
+    img = null;
+    blank = true;             // mantener canvas activo con fondo neutro
+    imgInput.value = '__CLEAR__';
+    setPlaceholderVisible(false);
+    draw();
+  });
+
+  // Modo trace toggle
+  btnTrace.addEventListener('click', () => {
+    traceMode = !traceMode;
+    btnTrace.classList.toggle('btn--primary', traceMode);
+    btnTrace.classList.toggle('btn--ghost', !traceMode);
+    updateCursor();
+  });
+
+  // Preview curva suave toggle
+  function refreshSmoothBtn() {
+    btnSmooth.classList.toggle('btn--primary', showSmooth);
+    btnSmooth.classList.toggle('btn--ghost', !showSmooth);
+  }
+  btnSmooth.addEventListener('click', () => {
+    showSmooth = !showSmooth;
+    refreshSmoothBtn();
+    draw();
+  });
+  refreshSmoothBtn();
+
+  fileInput.addEventListener('change', (e) => {
+    const f = e.target.files && e.target.files[0];
+    if (!f) return;
+    const reader = new FileReader();
+    reader.onload = () => {
+      const dataUrl = reader.result;
+      imgInput.value = dataUrl;
+      loadImage(dataUrl, /*resetPoints=*/false);
+    };
+    reader.readAsDataURL(f);
+  });
+
+  function loadImage(src, resetPoints) {
+    const i = new Image();
+    i.onload = () => {
+      img = i;
+      if (resetPoints) { points = []; sync(); }
+      setPlaceholderVisible(false);
+      draw();
+    };
+    i.onerror = () => { img = null; setPlaceholderVisible(true); };
+    i.src = src;
+  }
+
+  // Init
+  try {
+    const initialOutline = JSON.parse(outlineInput.value || '[]');
+    if (Array.isArray(initialOutline)) points = initialOutline.filter(p => Array.isArray(p) && p.length === 2);
+  } catch {}
+  updateCount();
+  const initialImg = imgInput.value;
+  if (initialImg && initialImg !== '__CLEAR__') {
+    loadImage(initialImg, false);
+  } else if (points.length > 0) {
+    // Hay trazado guardado pero no imagen → entrar directo en modo lienzo blanco
+    blank = true;
+    setPlaceholderVisible(false);
+    draw();
+  } else {
+    setPlaceholderVisible(true);
+  }
+})();
+</script>
+
+<script src="/js/laneColors.js"></script>
+<script>
+const circPills    = document.getElementById('circPills');
+const circCount    = document.getElementById('circuitsCount');
+const circGrid     = document.getElementById('circuitsGrid');
+const totalDisplay = document.getElementById('totalLanesDisplay');
+
+function updateTotal() {
+  const n = parseInt(circCount.value, 10);
+  let total = 0;
+  for (let i = 1; i <= n; i++) {
+    total += parseInt(document.getElementById('circLanes_' + i)?.value || 0, 10) || 0;
+  }
+  totalDisplay.textContent = total;
+}
+
+function setCircuitCount(n) {
+  circCount.value = n;
+  circPills.querySelectorAll('.circ-pill').forEach(btn => {
+    btn.classList.toggle('active', parseInt(btn.dataset.n) === n);
+  });
+  circGrid.querySelectorAll('.circuit-cfg-row').forEach(row => {
+    row.style.display = parseInt(row.dataset.idx) <= n ? '' : 'none';
+  });
+  updateTotal();
+  refreshLaneColorGrid();
+}
+
+circPills.addEventListener('click', e => {
+  const btn = e.target.closest('.circ-pill');
+  if (btn) setCircuitCount(parseInt(btn.dataset.n));
+});
+
+circGrid.addEventListener('input', () => { updateTotal(); rebuildSeqIfMismatch(); refreshLaneColorGrid(); });
+updateTotal();
+
+// ── Colores de carril del circuito ─────────────────────────────────────────
+const GLOBAL_LANE_COLORS = <%- JSON.stringify(gLaneColors) %>;
+const lcGrid   = document.getElementById('laneColorsGrid');
+const lcCustom = document.getElementById('laneColorsCustom');
+const lcCopy   = document.getElementById('btnLaneColorsGlobal');
+function laneColorOf(lane) {
+  const cols = lcCustom.checked ? PWLaneColors.values(lcGrid) : GLOBAL_LANE_COLORS;
+  return cols[(lane - 1) % cols.length];
+}
+function refreshLaneColorGrid() {
+  const total = totalLanesNow();
+  lcGrid.querySelectorAll('.lc-swatch').forEach(sw => { sw.hidden = parseInt(sw.dataset.lane, 10) > total; });
+  lcGrid.classList.toggle('is-disabled', !lcCustom.checked);
+  lcCopy.disabled = !lcCustom.checked;
+}
+PWLaneColors.bind(lcGrid, () => renderSeq([...seqEl.children].map(c => parseInt(c.dataset.lane, 10))));
+lcCustom.addEventListener('change', () => {
+  if (!lcCustom.checked) PWLaneColors.setAll(lcGrid, GLOBAL_LANE_COLORS);
+  refreshLaneColorGrid();
+  renderSeq([...seqEl.children].map(c => parseInt(c.dataset.lane, 10)));
+});
+lcCopy.addEventListener('click', () => {
+  PWLaneColors.setAll(lcGrid, GLOBAL_LANE_COLORS);
+  renderSeq([...seqEl.children].map(c => parseInt(c.dataset.lane, 10)));
+});
+
+// ── Lane sequence (drag-to-reorder) ────────────────────────────────────────
+const seqEl   = document.getElementById('seqLanes');
+const seqHidd = document.getElementById('laneSequenceInput');
+
+function totalLanesNow() {
+  const n = parseInt(circCount.value, 10);
+  let t = 0;
+  for (let i = 1; i <= n; i++) t += parseInt(document.getElementById('circLanes_' + i)?.value || 0, 10) || 0;
+  return t;
+}
+
+// Compute which sub-circuit a global lane belongs to (1-based).
+function laneToCircuit(lane) {
+  if (lane <= 0) return 0;
+  const sizes = getCircuitSizes();
+  let acc = 0;
+  for (let i = 0; i < sizes.length; i++) {
+    acc += sizes[i];
+    if (lane <= acc) return i + 1;
+  }
+  return sizes.length;
+}
+
+function renderSeq(seq) {
+  seqEl.innerHTML = '';
+  // Walk sequence to assign DSC labels per sub-circuit
+  const sizesCount = getCircuitSizes().length;
+  let currentCircuit = 1;
+  const restCounters = Array(sizesCount + 1).fill(0); // 1-based
+  seq.forEach((lane, idx) => {
+    const chip = document.createElement('div');
+    chip.className = 'seq-chip';
+    chip.draggable = true;
+    chip.dataset.lane = lane;
+    chip.dataset.idx  = idx;
+    const isRest = lane === 0;
+
+    let label = '';
+    if (isRest) {
+      restCounters[currentCircuit] = (restCounters[currentCircuit] || 0) + 1;
+      label = sizesCount > 1
+        ? `DSC${restCounters[currentCircuit]}-C${currentCircuit}`
+        : `DSC${restCounters[currentCircuit]}`;
+    } else {
+      currentCircuit = laneToCircuit(lane);
+      label = String(lane);
+    }
+
+    const minW = isRest && sizesCount > 1 ? '4.2rem' : '2.4rem';
+    chip.style.cssText = `
+      display:inline-flex;align-items:center;justify-content:center;
+      min-width:${minW};height:2.4rem;padding:0 .4rem;border-radius:6px;font-weight:700;
+      cursor:grab;user-select:none;font-family:'Rajdhani',sans-serif;font-size:${isRest ? '.7rem' : '1rem'};
+      ${isRest ? 'background:#30363d;color:#8b949e' : 'background:'+laneColorOf(lane)+';color:'+PWLaneColors.ink(laneColorOf(lane))}
+    `;
+    chip.textContent = label;
+    seqEl.appendChild(chip);
+  });
+  syncHidden();
+}
+
+function syncHidden() {
+  const arr = [...seqEl.children].map(c => parseInt(c.dataset.lane, 10));
+  seqHidd.value = arr.join(',');
+}
+
+function defaultSeq(total) {
+  const odds = [], evens = [];
+  for (let i = 1; i <= total; i++) (i % 2 ? odds : evens).push(i);
+  return [...odds, ...evens.reverse()];
+}
+function parseSeqFromValue(val, total) {
+  if (!val) return defaultSeq(total);
+  const arr = val.split(',').map(s => parseInt(s.trim(), 10)).filter(n => Number.isFinite(n) && n >= 0);
+  return arr.length ? arr : defaultSeq(total);
+}
+
+function rebuildSeqIfMismatch() {
+  const total = totalLanesNow();
+  const current = [...seqEl.children].map(c => parseInt(c.dataset.lane, 10));
+  const nonRestCurrent = current.filter(n => n > 0).sort((a,b)=>a-b);
+  const expectedLanes = Array.from({length: total}, (_, i) => i + 1);
+  // Only rebuild if non-rest lanes don't match the expected set
+  if (nonRestCurrent.length !== expectedLanes.length || nonRestCurrent.some((v,i)=>v!==expectedLanes[i])) {
+    renderSeq(defaultSeq(total));
+  }
+}
+
+// Drag-and-drop
+let dragSrc = null;
+seqEl.addEventListener('dragstart', e => {
+  const chip = e.target.closest('.seq-chip');
+  if (!chip) return;
+  dragSrc = chip;
+  chip.style.opacity = '.4';
+});
+seqEl.addEventListener('dragend', e => {
+  const chip = e.target.closest('.seq-chip');
+  if (chip) chip.style.opacity = '1';
+  dragSrc = null;
+});
+seqEl.addEventListener('dragover', e => {
+  e.preventDefault();
+  const chip = e.target.closest('.seq-chip');
+  if (!chip || chip === dragSrc) return;
+  const rect = chip.getBoundingClientRect();
+  const after = (e.clientX - rect.left) > rect.width / 2;
+  seqEl.insertBefore(dragSrc, after ? chip.nextSibling : chip);
+});
+seqEl.addEventListener('drop', e => {
+  e.preventDefault();
+  // Re-render so DSC labels (DSCn-Cm) reflect the new positions
+  const arr = [...seqEl.children].map(c => parseInt(c.dataset.lane, 10));
+  renderSeq(arr);
+});
+
+// ── DSC slot management ───────────────────────────────────────────────────
+function getCircuitSizes() {
+  const n = parseInt(circCount.value, 10);
+  const sizes = [];
+  for (let i = 1; i <= n; i++) sizes.push(parseInt(document.getElementById('circLanes_' + i)?.value || 0, 10) || 0);
+  return sizes;
+}
+
+// Smart distribution: in each sub-circuit, place rest slot after local lane 2
+// (odd Cs) or after lane M-1 (even Cs). Mirrors the old wizard logic.
+function buildSmartSeq(numRests) {
+  const sizes = getCircuitSizes();
+  const total = sizes.reduce((a,b)=>a+b, 0);
+  if (total === 0) return [];
+  const totalRests = Math.max(0, numRests);
+  const numCircuits = sizes.length;
+  const perCircuit = Array(numCircuits).fill(Math.floor(totalRests / numCircuits));
+  for (let i = 0; i < totalRests % numCircuits; i++) perCircuit[i]++;
+
+  const seq = [];
+  let globalStart = 1;
+  sizes.forEach((M, ci) => {
+    const isEven = (ci + 1) % 2 === 0;
+    const restAfterLocal = isEven ? (M - 1) : 2;
+    const rests = perCircuit[ci];
+    for (let local = 1; local <= M; local++) {
+      seq.push(globalStart + local - 1);
+      if (local === restAfterLocal) {
+        for (let r = 0; r < rests; r++) seq.push(0);
+      }
+    }
+    globalStart += M;
+  });
+  return seq;
+}
+
+document.getElementById('btnAddRest')?.addEventListener('click', () => {
+  const chips = [...seqEl.children].map(c => parseInt(c.dataset.lane, 10));
+  chips.push(0);
+  renderSeq(chips);
+});
+
+document.getElementById('btnSmartSeq')?.addEventListener('click', () => {
+  // Preserve the current rest count if any; otherwise default to 1 per sub-circuit.
+  const currentRests = [...seqEl.children].filter(c => parseInt(c.dataset.lane, 10) === 0).length;
+  const sizes = getCircuitSizes();
+  const numRests = currentRests > 0 ? currentRests : sizes.length;
+  renderSeq(buildSmartSeq(numRests));
+});
+
+document.getElementById('btnResetSeq')?.addEventListener('click', () => {
+  renderSeq(defaultSeq(totalLanesNow()));
+});
+
+// Remove a DSC chip by click (besides drag)
+seqEl.addEventListener('click', e => {
+  const chip = e.target.closest('.seq-chip');
+  if (!chip) return;
+  if (parseInt(chip.dataset.lane, 10) === 0) {
+    chip.remove();
+    const arr = [...seqEl.children].map(c => parseInt(c.dataset.lane, 10));
+    renderSeq(arr); // renumber remaining DSCs
+  }
+});
+
+// Initial render: from saved value or default rotation
+renderSeq(parseSeqFromValue(seqHidd.value, totalLanesNow()));
+refreshLaneColorGrid();
+
+// ── Crear categoría inline (POST /api/categories) ──────────────────────
+(function () {
+  const input = document.getElementById('newCatName');
+  const btn   = document.getElementById('btnAddCategory');
+  const grid  = document.getElementById('categoryGrid');
+  const empty = document.getElementById('catEmpty');
+  const feed  = document.getElementById('catFeedback');
+  if (!input || !btn || !grid) return;
+
+  function showFeedback(msg, isError) {
+    feed.textContent = msg;
+    feed.style.display = 'block';
+    feed.style.color = isError ? '#e63946' : '#4caf50';
+    if (!isError) setTimeout(() => { feed.style.display = 'none'; }, 2500);
+  }
+
+  function addCardToGrid(cat) {
+    const div = document.createElement('div');
+    div.className = 'cat-row';
+    div.dataset.catId = cat.id;
+    div.style.cssText = 'display:flex;align-items:center;gap:.5rem;background:#000000;border:1px solid #21262d;border-radius:6px;padding:.5rem .7rem';
+    div.innerHTML = `
+      <span style="flex:1;font-weight:600;font-size:.95rem">${cat.name}</span>
+      <input class="form-input form-input--sm" type="number" step="0.01" min="0" max="999"
+             name="category_min_lap_s_${cat.id}" placeholder="—" style="width:5.5rem">
+      <span class="form-hint">s</span>
+    `;
+    grid.appendChild(div);
+    if (empty) empty.style.display = 'none';
+  }
+
+  async function createCategory() {
+    const name = input.value.trim();
+    if (!name) { showFeedback(I18N.t('client.circuits.escribe_nombre'), true); input.focus(); return; }
+    btn.disabled = true;
+    try {
+      const res = await fetch('/api/categories', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name })
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        showFeedback(data.error || 'Error', true);
+      } else {
+        addCardToGrid({ id: data.id, name: data.name });
+        input.value = '';
+        showFeedback(I18N.t('client.circuits.categoria_creada', { nombre: data.name }), false);
+      }
+    } catch (e) {
+      showFeedback(I18N.t('client.circuits.error_red'), true);
+    } finally {
+      btn.disabled = false;
+      input.focus();
+    }
+  }
+
+  btn.addEventListener('click', createCategory);
+  input.addEventListener('keydown', e => {
+    if (e.key === 'Enter') { e.preventDefault(); createCategory(); }
+  });
+})();
+</script>
+
+<script>
+/* Sentido del circuito — sync visual al cambiar el radio */
+document.querySelectorAll('.dir-opt[data-dir]').forEach(opt => {
+  opt.addEventListener('click', () => {
+    document.querySelectorAll('.dir-opt[data-dir]').forEach(o => o.classList.remove('is-sel'));
+    opt.classList.add('is-sel');
+  });
+});
+</script>
+
+<%- include('../partials/footer') %>

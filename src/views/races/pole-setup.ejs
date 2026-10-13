@@ -1,0 +1,218 @@
+<%- include('../partials/header', { pageTitle: t('pole-setup.iniciar_pole_position') }) %>
+<div class="container container--narrow">
+
+  <a href="/races/<%= race.id %>" class="back-link">← <%= t('race.back_to_list') %></a>
+  <h1 class="page-title">🏁 <%= t('pole-setup.configurar_pole_position') %></h1>
+  <p class="page-subtitle"><%= race.name %> · <%= t('races.format.' + race.format) %></p>
+
+  <% if (errors.length > 0) { %>
+    <div class="alert alert--error">
+      <% errors.forEach(e => { %><p><%= t('pole-setup.carril_invalido', { n: race.lanes_count }) %></p><% }) %>
+    </div>
+  <% } %>
+
+  <div class="form-card">
+
+    <!-- Lane picker + participants (mismo form para enviar lane + orden) -->
+    <form action="/races/<%= race.id %>/pole/start" method="POST">
+
+    <!-- Participants preview -->
+    <div style="margin-bottom:1.5rem">
+      <div style="display:flex;align-items:center;justify-content:space-between;gap:.75rem;margin-bottom:.75rem;flex-wrap:wrap">
+        <p class="pole-section-title" style="margin:0">
+          <%= t('common.participantes') %>
+          <span class="form-hint" style="font-weight:400;margin-left:.5rem">
+            (<%= entries.length %>)
+          </span>
+        </p>
+        <button type="button" id="shuffleEntries" class="btn btn--ghost btn--sm">
+          🎲 <%= t('pole-setup.aleatorio') %>
+        </button>
+      </div>
+      <div id="entriesList" class="entry-grid">
+        <% entries.forEach((e, i) => { %>
+          <div class="entry-badge" data-id="<%= e.id %>" draggable="true">
+            <span class="entry-num"><%= i + 1 %></span>
+            <span class="entry-name"><%= e.entity_name %></span>
+          </div>
+        <% }) %>
+      </div>
+      <input type="hidden" name="entry_order" id="entryOrderInput"
+             value="<%= entries.map(e => e.id).join(',') %>">
+      <p class="form-hint" style="margin-top:.6rem">
+        <%= t('pole-setup.arrastra_un_participante_para_reordenarlo_o') %>
+      </p>
+    </div>
+
+    <hr style="border:none;border-top:1px solid var(--border);margin:1.25rem 0">
+
+      <div class="form-group">
+        <label class="form-label">
+          <%= t('common.carril_de_pole') %>
+        </label>
+        <p class="form-hint" style="margin-bottom:.75rem">
+          <%= t('pole-setup.todos_los_participantes_haran_su_vuelta') %>
+        </p>
+        <%
+          let _cfg = []; try { _cfg = JSON.parse(race.circuits_config || '[]'); } catch (e) {}
+          const _circuits = []; let _s = 1;
+          _cfg.forEach((c, i) => { _circuits.push({ index: i + 1, from: _s, to: _s + c - 1 }); _s += c; });
+        %>
+        <% if (_circuits.length > 1) { %>
+          <div class="pole-circuit-pick" style="display:flex;align-items:center;gap:.45rem;flex-wrap:wrap;margin-bottom:.85rem">
+            <span class="form-hint" style="margin:0"><%= t('pole-setup.acotar_aleatorio_a_circuito') %></span>
+            <button type="button" class="btn btn--ghost btn--sm pole-circ-btn is-active" data-circ="all"><%= t('common.todos') %></button>
+            <% _circuits.forEach(c => { %>
+              <button type="button" class="btn btn--ghost btn--sm pole-circ-btn" data-circ="<%= c.index %>"
+                      data-from="<%= c.from %>" data-to="<%= c.to %>"
+                      title="<%= t('common.carriles') %> <%= c.from %>–<%= c.to %>">
+                C<%= c.index %> <span style="opacity:.6;font-size:.85em">(<%= c.from %>–<%= c.to %>)</span>
+              </button>
+            <% }) %>
+          </div>
+        <% } %>
+        <div class="pole-lane-picker">
+          <button type="button" id="poleLaneDec" class="btn btn--ghost btn--sm pole-lane-btn">−</button>
+          <div class="pole-lane-display" id="poleLaneDisplay">
+            <span id="poleLaneNum">1</span>
+          </div>
+          <button type="button" id="poleLaneInc" class="btn btn--ghost btn--sm pole-lane-btn">+</button>
+          <button type="button" id="poleLaneRandom" class="btn btn--ghost" style="margin-left:.75rem">
+            🎲 <%= t('pole-setup.aleatorio') %>
+          </button>
+        </div>
+        <input type="hidden" name="pole_lane" id="poleLaneInput" value="1">
+      </div>
+
+      <div class="form-group">
+        <label class="form-label" for="poleDurationInput">
+          <%= t('pole-setup.duration_label') %>
+        </label>
+        <p class="form-hint" style="margin-bottom:.75rem">
+          <%= t('pole-setup.duration_hint') %>
+        </p>
+        <input class="form-input" type="number" id="poleDurationInput"
+               name="pole_duration_min" min="1" max="60" step="1"
+               value="<%= poleDurationMin %>" style="max-width:8rem">
+      </div>
+
+      <div class="form-actions" style="margin-top:1.5rem">
+        <a href="/races/<%= race.id %>" class="btn btn--ghost">← <%= t('wizard.back') %></a>
+        <button type="submit" class="btn btn--primary btn--lg">
+          🚦 <%= t('pole-setup.empezar_pole') %>
+        </button>
+      </div>
+
+    </form>
+  </div>
+</div>
+
+<style>
+.pole-circ-btn.is-active {
+  background: #1f6feb; border-color: #1f6feb; color: #fff;
+}
+.pole-circ-btn.is-active span { opacity: .85 !important; }
+.entry-grid {
+  column-width: 150px; column-gap: .4rem;
+}
+.entry-badge {
+  display: flex; align-items: center; gap: .5rem; min-width: 0;
+  padding: .4rem .6rem; margin: 0 0 .4rem; background: rgba(255,255,255,.06);
+  border: 1px solid var(--border); border-radius: var(--radius);
+  cursor: grab; user-select: none; transition: background .1s, opacity .1s;
+  break-inside: avoid;
+}
+.entry-badge:hover  { background: var(--bg-hover); border-color: var(--text-muted); }
+.entry-badge:active { cursor: grabbing; }
+.entry-badge.dragging { opacity: .35; }
+.entry-num {
+  min-width: 22px; height: 22px; flex: 0 0 auto;
+  display: inline-flex; align-items: center; justify-content: center;
+  border-radius: 5px; background: var(--bg-input); color: var(--text-sub);
+  font-family: var(--font-race); font-size: .75rem; font-weight: 700;
+}
+.entry-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+</style>
+<script>
+const TOTAL_LANES = <%= race.lanes_count %>;
+const COLORS      = <%- JSON.stringify(LANE_COLORS) %>;
+let poleLane = 1;
+
+function setPoleLane(n) {
+  poleLane = Math.max(1, Math.min(TOTAL_LANES, n));
+  document.getElementById('poleLaneNum').textContent    = poleLane;
+  document.getElementById('poleLaneInput').value        = poleLane;
+  document.getElementById('poleLaneDisplay').style.background = COLORS[(poleLane - 1) % COLORS.length];
+}
+setPoleLane(1);
+
+document.getElementById('poleLaneDec').addEventListener('click', () => setPoleLane(poleLane - 1));
+document.getElementById('poleLaneInc').addEventListener('click', () => setPoleLane(poleLane + 1));
+
+// Circuito al que se acota el aleatorio (por defecto: todos los carriles).
+let circFrom = 1, circTo = TOTAL_LANES;
+document.querySelectorAll('.pole-circ-btn').forEach(btn => {
+  btn.addEventListener('click', () => {
+    document.querySelectorAll('.pole-circ-btn').forEach(b => b.classList.remove('is-active'));
+    btn.classList.add('is-active');
+    if (btn.dataset.circ === 'all') { circFrom = 1; circTo = TOTAL_LANES; }
+    else { circFrom = parseInt(btn.dataset.from, 10); circTo = parseInt(btn.dataset.to, 10); }
+  });
+});
+
+document.getElementById('poleLaneRandom').addEventListener('click', () => {
+  // Aleatorio acotado al circuito seleccionado (o a todos).
+  setPoleLane(circFrom + Math.floor(Math.random() * (circTo - circFrom + 1)));
+});
+
+// ── Shuffle de participantes ─────────────────────────────────────────────
+(function () {
+  const list  = document.getElementById('entriesList');
+  const input = document.getElementById('entryOrderInput');
+  const btn   = document.getElementById('shuffleEntries');
+  if (!list || !input || !btn) return;
+
+  function syncHidden() {
+    const nodes = [...list.querySelectorAll('.entry-badge')];
+    nodes.forEach((el, i) => { el.querySelector('.entry-num').textContent = i + 1; });
+    input.value = nodes.map(el => el.dataset.id).join(',');
+  }
+  btn.addEventListener('click', () => {
+    const nodes = [...list.querySelectorAll('.entry-badge')];
+    // Fisher-Yates
+    for (let i = nodes.length - 1; i > 0; i--) {
+      const j = Math.floor(Math.random() * (i + 1));
+      [nodes[i], nodes[j]] = [nodes[j], nodes[i]];
+    }
+    list.innerHTML = '';
+    nodes.forEach(n => list.appendChild(n));
+    syncHidden();
+  });
+
+  // ── Reorden manual arrastrando ───────────────────────────────────────────
+  let dragSrc = null;
+  list.addEventListener('dragstart', e => {
+    dragSrc = e.target.closest('.entry-badge');
+    if (!dragSrc) return;
+    dragSrc.classList.add('dragging');
+    e.dataTransfer.effectAllowed = 'move';
+  });
+  list.addEventListener('dragover', e => {
+    if (!dragSrc) return;
+    e.preventDefault();
+    const target = e.target.closest('.entry-badge');
+    if (target && target !== dragSrc) {
+      const rect  = target.getBoundingClientRect();
+      const after = e.clientY > rect.top + rect.height / 2;
+      list.insertBefore(dragSrc, after ? target.nextSibling : target);
+    }
+  });
+  list.addEventListener('dragend', () => {
+    if (dragSrc) dragSrc.classList.remove('dragging');
+    dragSrc = null;
+    syncHidden();
+  });
+})();
+</script>
+
+<%- include('../partials/footer') %>

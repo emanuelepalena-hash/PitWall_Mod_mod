@@ -1,0 +1,62 @@
+<%- include('../partials/header', { lang, pageTitle: typeof pageTitle !== 'undefined' ? pageTitle : '' }) %>
+
+<div class="vt-page">
+  <div class="vt-wrap vt-wrap--narrow">
+
+    <a href="/categories" class="vt-back-link">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M19 12H5M12 19l-7-7 7-7"/></svg>
+      <%= t('form.volver_a_categorias') %>
+    </a>
+
+    <h1>
+      <% if (category) { %>
+        <%= t('form.editar_categoria') %>
+      <% } else { %>
+        <%= t('common.nueva_categoria') %>
+      <% } %>
+    </h1>
+
+    <% if (error) { %>
+      <div class="vt-alert" style="margin-top:16px">
+        <p><strong><%= t('client.common.error') %>:</strong> <%= error %></p>
+      </div>
+    <% } %>
+
+    <form action="<%= category ? '/categories/' + category.id : '/categories' %>" method="POST" class="vt-panel">
+
+      <div class="vt-form-group">
+        <label class="vt-form-group__label" for="name">
+          <%= t('form.nombre_de_la_categoria') %> *
+        </label>
+        <input class="vt-inp" type="text" id="name" name="name" maxlength="50"
+          value="<%= category?.name || '' %>"
+          placeholder="<%= t('form.ej_formula_1_rally_clasicos') %>"
+          autocomplete="off" autofocus required>
+        <p class="vt-hint"><%= t('form.nombre_que_veras_en_los_catalogos_de_coches_y') %></p>
+      </div>
+
+      <div class="vt-form-group">
+        <label class="vt-form-group__label" for="description">
+          <%= t('common.descripcion') %>
+        </label>
+        <textarea class="vt-inp" id="description" name="description" rows="3" maxlength="200"
+          style="height:auto;padding-top:12px;padding-bottom:12px;line-height:1.5;resize:vertical"
+          placeholder="<%= t('form.descripcion_opcional') %>"><%= category?.description || '' %></textarea>
+        <p class="vt-hint"><%= t('form.informacion_adicional_sobre_esta_categoria') %></p>
+      </div>
+
+      <div class="vt-form-actions">
+        <a href="/categories" class="vt-btn vt-btn--ghost"><%= t('client.common.cancelar') %></a>
+        <button type="submit" class="vt-btn vt-btn--primary">
+          <% if (category) { %>
+            <%= t('common.guardar_cambios') %>
+          <% } else { %>
+            <%= t('form.crear_categoria') %>
+          <% } %>
+        </button>
+      </div>
+    </form>
+  </div>
+</div>
+
+<%- include('../partials/footer') %>

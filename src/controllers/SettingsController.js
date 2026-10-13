@@ -1,0 +1,412 @@
+/*
+ * PitWall — gestión y cronometraje de carreras de slot
+ * Copyright (C) 2026 Víctor González Gómez <vgonzalezgomez@outlook.es>
+ *
+ * This program is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU Affero General Public License as published by
+ * the Free Software Foundation, either version 3 of the License, or
+ * (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU Affero General Public License for more details.
+ *
+ * You should have received a copy of the GNU Affero General Public License
+ * along with this program.  If not, see <https://www.gnu.org/licenses/>.
+ */
+const Settings       = require('../models/Settings');
+const SerialService  = require('../services/SerialService');
+const DebugLogger    = require('../services/DebugLogger');
+const Circuit        = require('../models/Circuit');
+const { DEFAULT_MODEL, MODELS, normalizeModel, modelInfo } = require('../lib/dsModels');
+
+// Preferencias de guardado inmediato y sus valores válidos (el 1º = por defecto).
+const PREFS = {
+  ui_mode:               ['advanced', 'basic'],
+  training_history_mode: ['recent', 'best'],
+  // Por defecto 'auto': la coma (fracción de vuelta al caer la bandera) se
+  // calcula sola. 'manual' habilita corregirla a mano en la pantalla de
+  // correcciones de una manga cerrada (ver models/Lap._lastMangaByEntity).
+  manual_coma:           ['auto', 'manual'],
+};
+
+// Preferencias numéricas de guardado inmediato: clave → [mín, máx].
+const NUM_PREFS = {
+  late_crossing_grace_ms: [0, 10000],
+};
+
+class SettingsController {
+
+  static async _scanPorts() {
+    const fs = require('fs');
+    const ports = await SerialService.listPorts();
+    const out = ports.map(p => ({ path: p.path, manufacturer: p.manufacturer || null }));
+    if (process.platform !== 'win32') {
+      try {
+        const entries = fs.readdirSync('/dev')
+          .filter(n => /^ttys\d{3,}$|^tty\.(usbserial|usbmodem|SLAB|wchusbserial)/i.test(n))
+          .map(n => '/dev/' + n)
+          .filter(p => !out.find(o => o.path === p));
+        for (const path of entries) out.push({ path, manufacturer: 'pty/usb-serial' });
+      } catch {}
+    }
+    out.sort((a, b) => a.path.localeCompare(b.path));
+    return out;
+  }
+
+  // ¿Se ve el interface TicTacSlot por USB? Lo consulta Ajustes para mostrar «detectado».
+  static tictacDevices(req, res) {
+    const TicTacConnection = require('../services/TicTacConnection');
+    res.json(TicTacConnection.listDevices());
+  }
+
+  static async index(req, res) {
+    const cfg   = Settings.getAll();
+    const ports = await SettingsController._scanPorts();
+
+    let circuits = [];
+    try { circuits = JSON.parse(cfg.circuits_serial || '[]'); } catch {}
+    if (circuits.length === 0) circuits = [{ port: '', baud: 57600, lanes: 8, dataBits: 8, parity: 'none', stopBits: 1, flowControl: 'none' }];
+
+    const multiCircuit = true;
+
+    // BART: cada Master físico (BART_TRACK1, BART_TRACK2…) es una entrada
+    // independiente de circuits_serial. Sin configuración previa, una fila vacía.
+    let bartCircuits = circuits.filter(c => c.type === 'bart');
+    if (bartCircuits.length === 0) bartCircuits = [{ name: '', lanes: 8, host: '127.0.0.1', port: 9300 }];
+
+    const net = require('../utils/network');
+    const bindIface = cfg.server_bind_iface || '';
+
+    res.render('settings/index', {
+      t: req.t,
+      cfg,
+      ports,
+      circuits,
+      dsModels: MODELS,
+      multiCircuit,
+      allCircuits:    Circuit.findAll(),
+      bartCircuits,
+      isSimulating:   SerialService.isSimulating,
+      connectedPorts: SerialService.connectedPorts,
+      rawLog:         SerialService.getRawLog().slice(-20),
+      // Red del servidor: interfaces disponibles, la elegida, y las IP de acceso.
+      netInterfaces:  net.listInterfaces(),
+      bindIface,
+      serverIps:      net.serverIPs(bindIface),
+      serverPort:     parseInt(process.env.PORT || '3000', 10),
+      // HTTPS/cámara: estado, puerto y huella de la CA para cotejar.
+      httpsEnabled:   cfg.https_enabled === '1',
+      httpsPort:      parseInt(cfg.https_port || '3443', 10) || 3443,
+      caFingerprint:  (() => { try { return require('../services/TlsService').caFingerprint(); } catch { return null; } })(),
+      uiMode:              cfg.ui_mode === 'basic' ? 'basic' : 'advanced',
+      trainingHistoryMode: cfg.training_history_mode === 'best' ? 'best' : 'recent',
+      manualComa:          cfg.manual_coma === 'manual' ? 'manual' : 'auto',
+      lateCrossingGraceMs: require('../services/TimingService').constructor.lateCrossingGraceMs(),
+      clubBrand:           require('../services/ClubBrand').get(),
+      passwordEnabled:     require('../services/AccessPassword').isEnabled(),
+      passwordOverridden:  process.env.PITWALL_DISABLE_PASSWORD === '1',
+    });
+  }
+
+  // POST /settings/lane-colors — solo la paleta global; aparte de save() porque
+  // aquel re-abre los puertos serie y no puede tocarse con una manga en marcha.
+  static saveLaneColors(req, res) {
+    const LaneColors = require('../services/LaneColors');
+    const colors = String(req.body.colors || '').split(',');
+    Settings.set('lane_colors', LaneColors.toStored(colors, LaneColors.DEFAULT_LANE_COLORS) || '');
+    res.json({ ok: true, colors: LaneColors.global() });
+  }
+
+  // POST /settings/prefs — preferencias que se guardan al momento (sin pasar
+  // por save(), que reabre los puertos serie). Solo las claves de PREFS.
+  static savePrefs(req, res) {
+    const key = String(req.body.key || '');
+    const range = NUM_PREFS[key];
+    if (range) {
+      const n = Math.round(Number(req.body.value));
+      if (!Number.isFinite(n) || n < range[0] || n > range[1]) return res.status(400).json({ ok: false });
+      Settings.set(key, n);
+      return res.json({ ok: true, key, value: n });
+    }
+    const allowed = PREFS[key];
+    const value = String(req.body.value || '');
+    if (!allowed || !allowed.includes(value)) return res.status(400).json({ ok: false });
+    Settings.set(key, value);
+    // Encender o apagar la corrección manual cambia la coma efectiva de carreras
+    // ya cerradas sin tocar `laps` ni `manga_lanes`: hay que tirar a mano las
+    // cachés por contador (resultados, móvil, Lap) y las del motor + worker.
+    if (key === 'manual_coma') {
+      require('../models/Lap').markExternalMutation();
+      require('../services/TimingService').invalidateStandingsCaches();
+    }
+    res.json({ ok: true, key, value });
+  }
+
+  // POST /settings/club — nombre y logo del club. `logo` ausente = no tocarlo.
+  static saveClub(req, res) {
+    const ClubBrand = require('../services/ClubBrand');
+    const body = req.body || {};
+    try {
+      const b = ClubBrand.save({
+        enabled: body.enabled === true || body.enabled === '1',
+        name:    body.name,
+        logo:    typeof body.logo === 'string' ? body.logo : undefined,
+      });
+      res.json({ ok: true, enabled: b.enabled, name: b.name, hasLogo: !!b.logo });
+    } catch (e) {
+      if (e.code !== 'invalid_logo') throw e;
+      res.status(400).json({ ok: false, error: req.t('settings.club_logo_no_valido') });
+    }
+  }
+
+  // GET /club/logo — pública: la piden la TV, los QR y los resultados públicos.
+  static clubLogo(req, res) {
+    const ClubBrand = require('../services/ClubBrand');
+    const img = ClubBrand.parseDataUri(ClubBrand.get().logo);
+    if (!img) return res.status(404).end();
+    res.setHeader('Content-Type', 'image/' + img.extension);
+    res.setHeader('Cache-Control', req.query.v ? 'public, max-age=31536000, immutable' : 'no-cache');
+    res.end(img.buffer);
+  }
+
+  // POST /settings/security — contraseña de acceso de la organización.
+  static saveSecurity(req, res) {
+    const AccessPassword = require('../services/AccessPassword');
+    const enabled  = req.body.enabled === '1';
+    const password = String(req.body.password || '');
+    const confirm  = String(req.body.confirm || '');
+    const fail = (msg) => res.status(400).json({ ok: false, error: msg });
+
+    if (!enabled) {
+      AccessPassword.setEnabled(false);
+      return res.json({ ok: true, enabled: false });
+    }
+    if (password || !AccessPassword.hasPassword()) {
+      if (password.length < AccessPassword.MIN_LENGTH) {
+        return fail(req.t('settings.the_password_needs_at_least_v_characters', { v: AccessPassword.MIN_LENGTH }));
+      }
+      if (password !== confirm) return fail(req.t('settings.the_two_passwords_do_not_match'));
+      AccessPassword.setPassword(password);
+    }
+    AccessPassword.setEnabled(true);
+    // Quien la activa sigue dentro: si no, le echaría de la página en la que está.
+    req.session.pwAuthed = true;
+    res.json({ ok: true, enabled: true });
+  }
+
+  static async listPorts(req, res) {
+    res.json({ ports: await SettingsController._scanPorts() });
+  }
+
+  static async save(req, res) {
+    const { serial_mode, sim_lanes, sim_avg_ms, serial_frame_gap_ms, debug_mode, infolap_enabled,
+            access_restrict_enabled, access_allowlist } = req.body;
+    const debugOn   = debug_mode      === '1' || debug_mode      === 'on' || debug_mode      === 'true';
+    const infolapOn = infolap_enabled === '1' || infolap_enabled === 'on' || infolap_enabled === 'true';
+    const accessOn  = access_restrict_enabled === '1' || access_restrict_enabled === 'on' || access_restrict_enabled === 'true';
+    // Allowlist: IPs/CIDR separadas por coma, salto de línea o ';'
+    const allowlist = String(access_allowlist || '')
+      .split(/[\n,;]+/).map(s => s.trim()).filter(Boolean);
+
+    // Parse multi-circuit config from form arrays
+    const portArr  = [].concat(req.body['circuit_port']  || []);
+    const baudArr  = [].concat(req.body['circuit_baud']  || []);
+    const lanesArr = [].concat(req.body['circuit_lanes'] || []);
+    const refArr   = [].concat(req.body['circuit_ref']   || []);
+    const dbArr    = [].concat(req.body['circuit_databits'] || []);
+    const parArr   = [].concat(req.body['circuit_parity']   || []);
+    const sbArr    = [].concat(req.body['circuit_stopbits'] || []);
+    const flowArr  = [].concat(req.body['circuit_flow']     || []);
+    const subArr   = [].concat(req.body['circuit_sub']      || []);
+    const modelArr = [].concat(req.body['circuit_model']    || []);
+
+    let circuits = portArr
+      .map((port, i) => {
+        const refId = parseInt(refArr[i], 10);
+        let lanes = parseInt(lanesArr[i] || '8', 10);
+        let circuit_id = null;
+        let sub_index = null;
+        // Si la fila referencia un escenario, los carriles son los de SU
+        // sub-circuito (no el total): un escenario de 3 circuitos × 8 se reparte
+        // en 3 filas de DS de 8, no en una de 24.
+        if (refId) {
+          const ref = Circuit.findById(refId);
+          if (ref) {
+            circuit_id = ref.id;
+            const cfg = Circuit.getConfig(ref);          // p.ej. [8,8,6]
+            const si  = parseInt(subArr[i], 10);
+            sub_index = (Number.isFinite(si) && si >= 0 && si < cfg.length) ? si : 0;
+            lanes = cfg[sub_index] || ref.lanes_count;
+          }
+        }
+        // Modelo de la familia DS. El DS-300 no se guarda (es el valor por
+        // defecto) para que la configuración existente quede idéntica.
+        const model = normalizeModel(modelArr[i]);
+        const info  = modelInfo(model);
+        if (model === 'ds200') lanes = Math.min(lanes, info.lanes);
+        if (model === 'ds080') lanes = info.lanes;
+        return {
+          port:  port.trim(),
+          baud:  parseInt(baudArr[i] || '57600', 10),
+          dataBits:    parseInt(dbArr[i] || '8', 10),
+          parity:      parArr[i]  || 'none',
+          stopBits:    parseInt(sbArr[i] || '1', 10),
+          flowControl: flowArr[i] || 'none',
+          lanes,
+          ...(model !== DEFAULT_MODEL ? { model } : {}),
+          ...(model === 'ds080' ? { boxes: info.boxes } : {}),
+          ...(circuit_id ? { circuit_id, sub_index } : {}),
+        };
+      })
+      .filter(c => c.port);
+
+    // Training circuit is derived from the first DS-300 that references a saved
+    // circuit. Falls back to '' (none) if no DS-300 has one assigned.
+    const trainingCircuitId = (circuits.find(c => c.circuit_id) || {}).circuit_id || '';
+
+    // Clamp parser tuning: invalid values fall back to default 75
+    const fg = parseInt(serial_frame_gap_ms, 10);
+    const fgClean = (Number.isFinite(fg) && fg >= 10 && fg <= 500) ? fg : 75;
+
+    // BART source: uno o varios Master independientes (BART_TRACK1, BART_TRACK2…),
+    // cada uno con su propio nombre/host/puerto. El fabricante documenta este
+    // despliegue como "Multi-Master Environments" (§9.9): cada Master mantiene su
+    // propio namespace de carriles y es el software cliente quien conecta a cada
+    // uno por separado y agrega la numeración global — igual que varias cajas
+    // DS-300. Una entrada de circuits_serial (type:'bart') por Master;
+    // SerialService.connectMultiple acumula el laneOffset en el orden de la lista.
+    const bartTransport = req.body.bart_transport === 'tcp' ? 'tcp' : 'ble';
+    const bm = parseInt(req.body.bart_minlap, 10);
+    const bartMinlap = (Number.isFinite(bm) && bm >= 0 && bm <= 65535) ? bm : 2000;
+
+    const bNameArr  = [].concat(req.body['bart_master_name']  || []);
+    const bLanesArr = [].concat(req.body['bart_master_lanes'] || []);
+    const bHostArr  = [].concat(req.body['bart_master_host']  || []);
+    const bPortArr  = [].concat(req.body['bart_master_port']  || []);
+
+    const bartMasters = bNameArr
+      .map((name, i) => ({
+        type:      'bart',
+        transport: bartTransport,
+        name:      String(name || `BART_TRACK${i + 1}`).trim() || `BART_TRACK${i + 1}`,
+        lanes:     parseInt(bLanesArr[i] || '8', 10) || 8,
+        host:      String(bHostArr[i] || '127.0.0.1').trim() || '127.0.0.1',
+        port:      parseInt(bPortArr[i] || '9300', 10) || 9300,
+        minlap:    bartMinlap,
+      }));
+    if (serial_mode === 'bart') {
+      circuits = bartMasters;
+    }
+
+    // Agrupador DS-300: varias cajas DS multiplexadas en un ÚNICO puerto COM.
+    // Un solo circuito con `boxes` (2..4). El parser las separa por byte[4] en
+    // bloques de 8 carriles → lanes = boxes × 8. 8N1 por defecto (como el DS).
+    const aggPort  = String(req.body.agg_port || '').trim();
+    const aggBaud  = parseInt(req.body.agg_baud || '57600', 10) || 57600;
+    let   aggBoxes = parseInt(req.body.agg_boxes || '2', 10);
+    if (!Number.isFinite(aggBoxes) || aggBoxes < 1) aggBoxes = 1;
+    if (aggBoxes > 4) aggBoxes = 4;
+    if (serial_mode === 'serial_agg') {
+      circuits = aggPort
+        ? [{ type: 'ds300_agg', port: aggPort, baud: aggBaud, boxes: aggBoxes, lanes: aggBoxes * 8,
+             dataBits: 8, parity: 'none', stopBits: 1, flowControl: 'none' }]
+        : [];
+    }
+
+    // Interface TicTac: un único circuito de lectura. Por USB (HID, autodetectado,
+    // sin puerto) o por un puerto serie (el PTY del emulador o del puente). 8 carriles
+    // como máximo; la velocidad es irrelevante en un PTY.
+    const ttTransport = req.body.tictac_transport === 'serial' ? 'serial' : 'usb';
+    const ttPort  = String(req.body.tictac_port || '').trim();
+    const ttBaud  = parseInt(req.body.tictac_baud || '57600', 10) || 57600;
+    const ttLanes = Math.max(1, Math.min(8, parseInt(req.body.tictac_lanes || '8', 10) || 8));
+    if (serial_mode === 'tictac') {
+      if (ttTransport === 'usb')      circuits = [{ type: 'tictac', transport: 'usb', lanes: ttLanes }];
+      else if (ttPort)                circuits = [{ type: 'tictac', transport: 'serial', port: ttPort, baud: ttBaud, lanes: ttLanes }];
+      else                            circuits = [];
+    }
+
+    Settings.setMany({
+      serial_mode:          serial_mode || 'simulation',
+      circuits_serial:      JSON.stringify(circuits),
+      bart_transport:       bartTransport,
+      bart_minlap:          String(bartMinlap),
+      agg_port:             aggPort,
+      agg_baud:             String(aggBaud),
+      agg_boxes:            String(aggBoxes),
+      tictac_transport:     ttTransport,
+      tictac_port:          ttPort,
+      tictac_baud:          String(ttBaud),
+      tictac_lanes:         String(ttLanes),
+      sim_lanes:            sim_lanes   || '6',
+      sim_avg_ms:           sim_avg_ms  || '12000',
+      training_circuit_id:  String(trainingCircuitId),
+      serial_frame_gap_ms:  String(fgClean),
+      debug_mode:           debugOn ? '1' : '0',
+      infolap_enabled:      infolapOn ? '1' : '0',
+      // Orden de tarjetas/filas del directo: clasificación estimada o vueltas reales.
+      live_order:           req.body.live_order === 'laps' ? 'laps' : 'projected',
+      access_restrict_enabled: accessOn ? '1' : '0',
+      access_allowlist:        JSON.stringify(allowlist),
+      // Interfaz de red a la que se ata el server (vacío = todas). Solo aplica
+      // al reiniciar (no se puede re-atar un server en marcha).
+      server_bind_iface:       String(req.body.server_bind_iface || '').trim(),
+      // HTTPS en la LAN para la cámara del escáner QR. Abre un puerto nuevo, así
+      // que solo aplica al reiniciar (como el bind de interfaz).
+      https_enabled:   (req.body.https_enabled === '1' || req.body.https_enabled === 'on') ? '1' : '0',
+      https_port:      String(parseInt(req.body.https_port || '3443', 10) || 3443),
+      // Túnel público (Cloudflare del propio club). El proceso se arranca/para
+      // con los botones de la sección (TunnelController), no al guardar.
+      tunnel_mode:      ['off', 'quick', 'token'].includes(req.body.tunnel_mode) ? req.body.tunnel_mode : 'off',
+      tunnel_token:     String(req.body.tunnel_token || '').trim(),
+      tunnel_hostname:  String(req.body.tunnel_hostname || '').trim().replace(/^https?:\/\//, '').replace(/\/+$/, ''),
+      tunnel_autostart: (req.body.tunnel_autostart === '1' || req.body.tunnel_autostart === 'on') ? '1' : '0',
+    });
+    DebugLogger.setEnabled(debugOn);
+
+    // Aplica toggle Infolap en caliente: arranca/para el UDP server sin
+    // necesidad de reiniciar el proceso. (El texto en Settings dice que
+    // requiere reinicio para curarse en salud, pero esto va igual.)
+    try {
+      const InfolapServer = require('../services/InfolapServer');
+      if (infolapOn && !InfolapServer.isRunning)  InfolapServer.start();
+      if (!infolapOn && InfolapServer.isRunning)  InfolapServer.stop();
+    } catch (e) { console.warn('[Settings] Infolap toggle failed:', e.message); }
+
+    if ((serial_mode === 'serial' || serial_mode === 'serial_agg' || serial_mode === 'bart' || serial_mode === 'tictac') && circuits.length > 0) {
+      await SerialService.closeAll();
+      SerialService.init(); // re-reads frame gap + reconnects (DS-300 or BART)
+    } else {
+      await SerialService.closeAll();
+      SerialService.startSimulation(
+        parseInt(sim_lanes  || '6',     10),
+        parseInt(sim_avg_ms || '12000', 10),
+      );
+    }
+
+    // Confirmación visible (flash): así el usuario SABE que se aplicó y con qué
+    // fuente/transporte (antes no había feedback → "parece que no aplica").
+    let src;
+    if (serial_mode === 'bart') {
+      src = bartTransport === 'ble'
+        ? (req.t('settings.bart_ble_searching_bartname', { bartName: bartName }))
+        : (req.t('settings.bart_tcp_barthost_bartport', { bartHost: bartHost, bartPort: bartPort }));
+    } else if (serial_mode === 'serial') {
+      const labels = [...new Set(circuits.map(c => modelInfo(c.model).label))].join(' + ');
+      src = req.t('settings.labels_v_circuit_v2', { labels: labels, v: circuits.length, v2: circuits.length === 1 ? '' : 's' });
+    } else if (serial_mode === 'tictac') {
+      src = `TicTac (${ttTransport === 'usb' ? 'USB' : (ttPort || '—')})`;
+    } else if (serial_mode === 'serial_agg') {
+      src = req.t('settings.ds_300_aggregator_aggboxes_box_v_v2_lanes', { aggBoxes: aggBoxes, v: aggBoxes === 1 ? '' : 'es', v2: aggBoxes * 8, v3: aggBoxes === 1 ? '' : 's' });
+    } else {
+      src = req.t('settings.simulation');
+    }
+    req.session.flash = { type: 'success', text: (req.t('settings.settings_applied_source')) + src };
+
+    res.redirect('/settings');
+  }
+}
+
+module.exports = SettingsController;

@@ -1,0 +1,479 @@
+<!DOCTYPE html>
+<html lang="<%= lang %>">
+<head>
+  <meta charset="UTF-8">
+<%- include('../partials/i18n-client') %>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title><%= race.name %> — <%= t('common.manga') %> <%= manga.number %> — PitWall</title>
+  <link rel="icon" type="image/svg+xml" href="/img/favicon.svg">
+  <link rel="icon" type="image/png" sizes="32x32"  href="/img/favicon-32.png">
+  <link rel="icon" type="image/png" sizes="256x256" href="/img/favicon-256.png">
+  <link rel="apple-touch-icon" sizes="180x180" href="/img/apple-touch-icon.png">
+  <link rel="stylesheet" href="/css/fonts.css">
+  <link rel="stylesheet" href="/css/semaphore.css">
+  <link rel="stylesheet" href="/css/live.css?v=<%= Date.now() %>">
+</head>
+<body class="live-body">
+
+  <!-- ── Header ────────────────────────────────────────────────────────────── -->
+  <header class="live-header">
+    <div class="live-header__timer">
+      <div id="raceTimer" class="live-timer"><%= String(race.manga_duration_minutes).padStart(2,'0') %>:00</div>
+      <!-- Con >1 circuito, se ocultará raceTimer y se mostrarán timers por circuito -->
+      <div id="circuitTimers" class="circuit-timers" hidden></div>
+      <div class="live-timer-label"><%= t('live.tiempo') %></div>
+    </div>
+
+    <div class="live-header__info">
+      <div class="live-manga-id">
+        <% if (tanda) { %>
+          <span class="live-tanda-tag"><%= t('common.tanda_2') %> <%= tanda.number %>/<%= typeof totalTandas !== 'undefined' ? totalTandas : '?' %></span>
+        <% } %>
+        <span class="live-manga-tag">
+          <%= t('common.manga') %> <%= manga.number %>/<%= typeof totalMangas !== 'undefined' ? totalMangas : '?' %>
+        </span>
+      </div>
+      <div id="timerStatus" class="live-status">
+        <% if (typeof isPaused !== 'undefined' && isPaused) { %>
+          <span class="status-dot status-dot--paused"></span>
+          <span class="status-text status-text--paused"><%= t('client.common.pausada') %></span>
+        <% } else if (isActive) { %>
+          <span class="status-dot status-dot--active"></span>
+          <span class="status-text status-text--active"><%= t('client.common.en_carrera') %></span>
+        <% } else if (manga.status === 'finished') { %>
+          <span class="status-text status-text--finished"><%= t('client.common.finalizada_2') %></span>
+        <% } else { %>
+          <span class="status-text status-text--pending"><%= t('client.common.en_espera') %></span>
+        <% } %>
+      </div>
+      <div class="live-race-subtitle"><%= race.name %></div>
+    </div>
+
+    <div class="live-header__actions">
+      <%# GO/STOP manual: solo cuando SlotTime inicia la carrera (simulación, BART o TicTac).
+          En DS-300 manda la caja → no se muestra. %>
+      <% if (softwareGo) { %>
+        <% const goTitle   = isBart   ? (t('live.arrancar_manga_bart'))
+                           : isTicTac ? (t('live.arrancar_manga_tictac'))
+                                      : (t('live.arrancar_simulacion')); %>
+        <% const stopTitle = isBart   ? (t('live.parar_manga_bart'))
+                           : isTicTac ? (t('live.parar_manga_tictac'))
+                                      : (t('live.parar_simulacion')); %>
+        <%# Duración por defecto: el 99 es el placeholder → ofrecer 10 min. %>
+        <% const defaultDur = (race.manga_duration_minutes && race.manga_duration_minutes !== 99) ? race.manga_duration_minutes : 10; %>
+        <%# Manga terminada: no hay caja que dé el siguiente GO, así que se ofrece
+            aquí para la siguiente pendiente (manga:started navega a ella). %>
+        <% const goMangaId = (manga.status === 'pending' && !isActive) ? manga.id
+                           : (manga.status === 'finished' && nextPendingMangaId) ? nextPendingMangaId : null; %>
+        <% if (goMangaId) { %>
+          <form id="goForm" action="/races/<%= race.id %>/mangas/<%= goMangaId %>/start" method="POST" style="display:inline-flex;align-items:center;gap:8px">
+            <label class="live-dur" title="<%= t('live.duracion_de_la_manga_minutos') %>">
+              <input class="vt-inp is-mono live-dur__inp" type="number" name="duration_minutes"
+                     min="1" max="600" step="1" value="<%= defaultDur %>"
+                     style="width:64px;text-align:center">
+              <span class="live-dur__u">min</span>
+            </label>
+            <button class="lbtn lbtn--go" type="submit" title="<%= goTitle %>">
+              <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M8 5v14l11-7z"/></svg>
+              <span>GO</span>
+            </button>
+          </form>
+        <% } else if (isActive) { %>
+          <% if (isPaused) { %>
+            <form id="resumeForm" action="/races/<%= race.id %>/mangas/<%= manga.id %>/resume" method="POST" style="display:inline">
+              <button class="lbtn lbtn--go" type="submit" title="<%= t('live.reanudar_manga') %>">
+                <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M8 5v14l11-7z"/></svg>
+                <span><%= t('live.reanudar') %></span>
+              </button>
+            </form>
+          <% } else { %>
+            <form action="/races/<%= race.id %>/mangas/<%= manga.id %>/pause" method="POST" style="display:inline">
+              <button class="lbtn" type="submit" title="<%= t('live.pausar_manga') %>">
+                <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><rect x="6" y="5" width="4" height="14" rx="1"/><rect x="14" y="5" width="4" height="14" rx="1"/></svg>
+                <span>PAUSE</span>
+              </button>
+            </form>
+          <% } %>
+          <form action="/races/<%= race.id %>/mangas/<%= manga.id %>/stop" method="POST" style="display:inline"
+            onsubmit="return confirm('<%= t('live.parar_la_manga_y_borrar_las_vueltas_registradas') %>')">
+            <button class="lbtn lbtn--fin" type="submit" title="<%= stopTitle %>">
+              <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><rect x="6" y="6" width="12" height="12" rx="1.5"/></svg>
+              <span>STOP</span>
+            </button>
+          </form>
+        <% } %>
+      <% } %>
+      <% if (typeof nextTanda !== 'undefined' && nextTanda) { %>
+        <button id="next-tanda-btn" class="lbtn lbtn--go"
+                data-race-id="<%= race.id %>"
+                data-tanda-id="<%= tanda.id %>"
+                data-next-tanda-number="<%= nextTanda.number %>">
+          <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M8 5v14l11-7z"/></svg>
+          <span><%= t('common.tanda_2') %> <%= nextTanda.number %></span>
+        </button>
+      <% } %>
+      <% if (manga.status === 'finished') { %>
+        <form action="/races/<%= race.id %>/mangas/<%= manga.id %>/repeat" method="POST" style="display:inline"
+          onsubmit="return confirm('<%= t('live.repetir_esta_manga_se_borraran_las_vueltas') %>')">
+          <button class="lbtn lbtn--repeat" type="submit" title="<%= t('live.repetir_manga') %>">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 12a9 9 0 0 1 15.5-6.4M21 3v6h-6M21 12a9 9 0 0 1-15.5 6.4M3 21v-6h6"/></svg>
+            <span><%= t('live.repetir') %></span>
+          </button>
+        </form>
+      <% } %>
+      <button id="voiceBtn" class="lbtn lbtn--back" onclick="toggleVoice()">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <path d="M11 5L6 9H2v6h4l5 4z"/>
+          <path d="M15 9a3 3 0 0 1 0 6"/>
+          <path d="M18 6a7 7 0 0 1 0 12"/>
+        </svg>
+        <span><%= t('client.common.todas') %></span>
+      </button>
+      <button id="viewBtn" class="lbtn lbtn--view" title="<%= t('live.cambiar_vista') %>" onclick="openViewPicker()">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <rect x="3" y="3" width="7" height="7" rx="1.2"/>
+          <rect x="14" y="3" width="7" height="7" rx="1.2"/>
+          <rect x="3" y="14" width="7" height="7" rx="1.2"/>
+          <rect x="14" y="14" width="7" height="7" rx="1.2"/>
+        </svg>
+        <span><%= t('live.vista') %></span>
+      </button>
+      <%# Clasificación estimada acoplada a la derecha (filas y tarjetas).
+          Estado por carrera en localStorage; ?side=standings|none lo fuerza. %>
+      <button id="sideBtn" class="lbtn lbtn--back lbtn--icon lbtn--toggle" type="button" aria-pressed="false"
+        title="<%= t('live.mostrar_ocultar_la_clasificacion_estimada_al') %>"
+        onclick="toggleSideStandings()">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <rect x="3" y="4" width="18" height="16" rx="1.8"/>
+          <path d="M14 4v16"/>
+          <path d="M16.5 8.5h2M16.5 12h2M16.5 15.5h2"/>
+        </svg>
+      </button>
+      <button class="lbtn lbtn--back lbtn--icon" title="<%= t('live.clasificacion_general_ventana') %>"
+        onclick="openPanel('/races/<%= race.id %>/mangas/<%= manga.id %>/panel/standings','width=620,height=780')">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 21h18M6 21v-7M11 21V10M16 21v-5M21 21V5"/></svg>
+      </button>
+      <button class="lbtn lbtn--back lbtn--icon" title="<%= t('live.minimapa_del_circuito_ventana') %>"
+        onclick="openPanel('/races/<%= race.id %>/mangas/<%= manga.id %>/panel/track','width=900,height=600')">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 3L3 5v16l6-2 6 2 6-2V3l-6 2-6-2zM9 3v16M15 5v16"/></svg>
+      </button>
+      <% if (race.format === 'team' && totalMangas > 1) { %>
+        <a href="/races/<%= race.id %>/lemans" target="_blank" onclick="openPanel(this.href,'width=1100,height=800'); return false;" class="lbtn lbtn--back lbtn--icon" title="<%= t('live.clasificacion_le_mans') %>">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 21V4M5 4h12l-2 4 2 4H5"/></svg>
+        </a>
+      <% } %>
+      <a href="/races/<%= race.id %>/mangas/<%= manga.id %>/corrections" target="_blank" onclick="openPanel(this.href,'width=1000,height=750'); return false;" class="lbtn lbtn--back lbtn--icon" title="<%= t('common.correccion_de_vueltas_2') %>">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <path d="M12 20h9"/>
+          <path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4z"/>
+        </svg>
+      </a>
+      <a href="/races/<%= race.id %>/events" target="_blank" onclick="openPanel(this.href,'width=800,height=800'); return false;" class="lbtn lbtn--back lbtn--icon" title="<%= t('common.registro_de_sucesos') %>">
+        <svg viewBox="0 0 40 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <path d="M4 2h6l4 4v14a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2z"/>
+          <path d="M10 2v4h4"/>
+          <path d="M5 12h6M5 16h4"/>
+          <path d="M20 12c0-3 3.6-6 8-6s8 3 8 6-3.6 6-8 6-8-3-8-6z"/>
+          <circle cx="28" cy="12" r="2.1" fill="currentColor" stroke="none"/>
+        </svg>
+      </a>
+      <button id="fsBtn" class="lbtn lbtn--back lbtn--icon" onclick="toggleFullscreen()"
+        title="<%= t('common.pantalla_completa') %>">
+        <svg class="fs-ico-open"  viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M8 3H5a2 2 0 0 0-2 2v3m18 0V5a2 2 0 0 0-2-2h-3M3 16v3a2 2 0 0 0 2 2h3m8 0h3a2 2 0 0 0 2-2v-3"/></svg>
+        <svg class="fs-ico-close" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" hidden><path d="M8 3v3a2 2 0 0 1-2 2H3m18 0h-3a2 2 0 0 1-2-2V3M3 16h3a2 2 0 0 1 2 2v3m8 0v-3a2 2 0 0 1 2-2h3"/></svg>
+      </button>
+      <a href="/races/<%= race.id %>" class="lbtn lbtn--back" data-no-fs-restore title="<%= t('common.volver_a_la_carrera') %>">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M19 12H5M12 19l-7-7 7-7"/></svg>
+        <span><%= t('common.volver') %></span>
+      </a>
+    </div>
+  </header>
+
+  <%# «El GO no es de este directo»: lo pinta live.js con el dueño del GO (GoOwnerService). %>
+  <div id="goStrip" class="go-strip" hidden></div>
+
+  <!-- DS-300 link-down banner (hidden until socket fires serial:status).
+       El texto lo compone live.js a partir de `down`: con 3 cajas hay que ver de
+       un vistazo CUÁL se ha caído, no solo que algo va mal. -->
+  <div id="serialBanner" class="serial-banner" hidden
+       data-msg-all="<%= t('live.sin_senal_del_ds_300_las_vueltas_que_ocurran') %>"
+       data-msg-some="<%= t('live.sin_senal_de_cajas_las_vueltas_que_ocurran') %>"
+       data-box-label="<%= t('live.caja') %>">
+    <span class="serial-banner__icon">⚠️</span>
+    <span id="serialBannerText" class="serial-banner__text"></span>
+    <span id="serialBannerSince" class="serial-banner__since"></span>
+  </div>
+
+  <!-- ── Toolbar: VUELTAS RÁPIDAS ────────────────────────────────────────── -->
+  <div class="live-toolbar" id="liveToolbar">
+    <div class="live-toolbar__fastest">
+      <span class="live-toolbar__label live-toolbar__label--fast">
+        ⚡ <%= t('live.vueltas_rapidas') %>
+        <a href="/races/<%= race.id %>/mangas/<%= manga.id %>/panel/fastest" target="_blank" class="panel-expand" title="<%= t('live.abrir_en_ventana') %>">⤢</a>
+      </span>
+      <div class="live-footer__items" id="bestLapsFooter"></div>
+    </div>
+  </div>
+
+  <!-- ── Main layout ───────────────────────────────────────────────────────── -->
+  <div class="live-layout">
+
+    <!-- Lane cards + header de columnas (V1) como primer hijo para compartir
+         el padding del contenedor y alinearse con las filas. En V2 el header
+         se oculta vía CSS body:has(.live-lanes--vertical). -->
+    <div class="live-lanes" id="lanesGrid">
+      <div class="lanes-header" id="lanesHeader" aria-hidden="true">
+        <div class="lh-col lh-col--name"><%= t('live.piloto') %></div>
+        <div class="lh-col lh-col--vlt"   data-col="vlt"><%= t('client.common.vlt') %></div>
+        <div class="lh-col lh-col--total" data-col="total"><%= t('live.total') %></div>
+        <div class="lh-col lh-col--last"  data-col="ultima"><%= t('live.ultima') %></div>
+        <div class="lh-col lh-col--best"  data-col="mejor"><%= t('live.mejor') %></div>
+        <div class="lh-col lh-col--avg"   data-col="media"><%= t('live.media') %></div>
+        <div class="lh-col lh-col--delta" data-col="delta"><%= t('live.gap_v') %></div>
+        <div class="lh-col lh-col--next"><%= t('live.prox') %></div>
+      </div>
+    </div>
+
+    <!-- Resizer + clasificación estimada acoplada a la derecha: ocultos salvo
+         con el conmutador #sideBtn encendido (body.side-standings, ver
+         live.css/live.js). También se puede abrir en ventana aparte (📊). -->
+    <div id="sidebarResizer" class="sidebar-resizer" title="<%= t('live.arrastra_para_redimensionar') %>"></div>
+
+    <aside class="live-sidebar" id="liveSidebar">
+      <div class="live-panel">
+        <div class="live-panel__title">
+          <%= t('live.clasificacion_estimada') %>
+          <span class="live-panel__subtitle"><%= t('live.al_final_de_la_carrera') %></span>
+          <a href="/races/<%= race.id %>/mangas/<%= manga.id %>/panel/standings" target="_blank" class="panel-expand" title="<%= t('live.abrir_en_ventana') %>">⤢</a>
+        </div>
+        <div class="live-panel__body">
+        <table class="sidebar-table sidebar-table--auto">
+          <thead>
+            <tr>
+              <th>#</th>
+              <th><%= t('common.participante') %></th>
+              <th class="sr-right" title="<%= t('live.vueltas_proyectadas_al_final_de_la_carrera') %>"><%= t('common.v_proy') %></th>
+              <th class="sr-right" title="<%= t('live.vueltas_reales_acumuladas') %>"><%= t('client.common.total') %></th>
+              <th class="sr-right"><%= t('client.common.media') %></th>
+              <th class="sr-center" title="<%= t('live.tendencia_arriba_abajo') %>">↕</th>
+              <th class="sr-right" title="<%= t('common.vueltas_proyectadas_respecto_al_de_delante') %>"><%= t('client.common.gap_v') %></th>
+              <th class="sr-right" title="<%= t('live.vueltas_proyectadas_respecto_al_primer') %>"><%= t('live.gap_v_t') %></th>
+            </tr>
+          </thead>
+          <tbody id="projectedBody"></tbody>
+        </table>
+        </div>
+      </div>
+    </aside>
+  </div>
+
+  <!-- Footer eliminado: las vueltas rápidas se muestran ahora en la toolbar. -->
+
+  <%
+    // Compute initial lane state from DB laps
+    const LC = laneColorsFor(race);
+    const laneInit = {};
+    // Number resting entities (1..N) alphabetically by name so each rest
+    // entity has its own card with "Descanso n/N".
+    // Totales y mangas PENDIENTES por ENTIDAD (de aggregateByRace + asignaciones).
+    // finished_race (del controlador) = ya no le quedan mangas por CORRER
+    // después de la actual (por POSICIÓN, no por estado). Así funciona tanto en
+    // vivo como revisando una carrera cerrada: en la manga 7/11 un equipo que
+    // aún corre la 9/10/11 NO está FINAL.
+    const entityTotalLaps = {};
+    const entityTotalTime = {};
+    const entityFinished  = {};
+    (allParticipants || []).forEach(p => {
+      if (p.entity_id == null) return;
+      const k = `${p.entity_type === 'team' ? 't' : 'd'}${p.entity_id}`;
+      entityTotalLaps[k] = p.total_laps || 0;
+      entityTotalTime[k] = p.total_time_ms || 0;
+      entityFinished[k]  = !!p.finished_race;
+    });
+    // Entidades que NO corren esta manga: separar las que aún volverán a correr
+    // (DESCANSO, le quedan carriles) de las que ya han corrido TODOS sus carriles
+    // (FINAL). Solo las que descansan entran en la "rueda de descansos" (x/y);
+    // las acabadas salen de esa rueda y se marcan como FINAL.
+    const keyOf = l => l.team_id ? `t${l.team_id}` : `d${l.driver_id}`;
+    const notRacing = lanes.filter(l => l.is_rest)
+      .sort((a, b) => (a.team_name || a.driver_name || '').localeCompare(b.team_name || b.driver_name || ''));
+    const restingEntries  = notRacing.filter(l => !entityFinished[keyOf(l)]);
+    const finishedEntries = notRacing.filter(l =>  entityFinished[keyOf(l)]);
+    const restTotal = restingEntries.length;
+    const cardInfoByKey = {};
+    restingEntries.forEach((l, i)  => { cardInfoByKey[keyOf(l)] = { cardId: 'r' + (i + 1), restPos: i + 1, finished: false }; });
+    finishedEntries.forEach((l, i) => { cardInfoByKey[keyOf(l)] = { cardId: 'f' + (i + 1), restPos: null,    finished: true  }; });
+    lanes.forEach(l => {
+      const entityKey = l.team_id ? `t${l.team_id}` : (l.driver_id ? `d${l.driver_id}` : null);
+      const info    = (l.is_rest && entityKey) ? cardInfoByKey[entityKey] : null;
+      const cardId  = l.is_rest ? (info ? info.cardId : 'r0') : String(l.lane);
+      laneInit[cardId] = {
+        cardId,
+        lane:         l.lane,
+        name:         l.team_name || l.driver_name || ('Lane ' + l.lane),
+        country:      l.team_country || null,
+        categoria:    (l.team_id != null ? l.team_categoria : l.driver_categoria) || null,
+        color:        l.is_rest ? (l.team_color || '#484f58') : (LC[l.lane - 1] || '#8b949e'),
+        isRest:       l.is_rest ? true : false,
+        finished:     info ? info.finished : false,
+        restPos:      info ? info.restPos : null,
+        restTotal,
+        lapCount:     0, bestLapMs: null, lastLapMs: null, exitCount: 0,
+        prevLapCount: l.is_rest
+          ? (entityKey ? (entityTotalLaps[entityKey] || 0) : 0)
+          : (prevLapsByLane[l.lane] || 0),
+        totalTimeMs:  entityKey ? (entityTotalTime[entityKey] || 0) : null,
+        _lapSum: 0, _lapN: 0, avgLapMs: null,
+        teamMembers:  teamMembersByLane[l.lane] || [],
+        activeDriver: activeDriversByLane[l.lane] || null,
+        entityId:     l.team_id || l.driver_id || null,
+        entityType:   l.team_id ? 'team' : (l.driver_id ? 'driver' : null),
+      };
+    });
+    laps.forEach(l => {
+      const s = laneInit[l.lane];
+      if (!s || s.isRest) return;
+      s.lapCount = Math.max(s.lapCount, l.lap_number);
+      if (!l.is_warmup) s.lastLapMs = l.lap_time_ms;
+      // lap_number > 1: la 1ª vuelta de la manga no cuenta como mejor vuelta.
+      if (!l.is_exit && l.lap_number > 1 && (!s.bestLapMs || l.lap_time_ms < s.bestLapMs)) s.bestLapMs = l.lap_time_ms;
+      if (l.is_exit) s.exitCount++;
+      // Media "sucia" = igual que el servidor: excluye SOLO el warmup (out-lap),
+      // incluye las salidas. (Antes incluía el warmup y excluía salidas → medias
+      // absurdas de 0,2-5s cuando el out-lap pesaba en pocas vueltas.)
+      if (!l.is_warmup) { s._lapSum += l.lap_time_ms; s._lapN++; }
+    });
+    Object.values(laneInit).forEach(s => {
+      s.avgLapMs = s._lapN > 0 ? Math.round(s._lapSum / s._lapN) : null;
+    });
+  %>
+
+  <script>
+    const RACE_DATA = <%- JSON.stringify({
+      id:             race.id,
+      raceId:         race.id,
+      mangaId:        manga.id,
+      tandaId:        manga.tanda_id,
+      mangaNumber:    manga.number,
+      mangaStatus:    manga.status,
+      isActive:       isActive,
+      isPaused:       typeof isPaused !== 'undefined' && isPaused,
+      isTeam:         race.format === 'team',
+      tireControl:    (race.tire_pairs_per_team || 0) > 0,
+      // Ajustes → Orden del directo: 'projected' (estimada) o 'laps' (vueltas reales).
+      liveOrder:      liveOrder,
+      // Control de pilotos: resistencia por equipos con pilotos inscritos.
+      driverControl:  race.type === 'championship' && race.format === 'team'
+                        && Object.values(teamMembersByLane).some(m => m.length > 0),
+      durationMs:     null,
+      mangaDurationMs: race.manga_duration_minutes * 60000,
+      standings:      standings,
+      projection:     projection,
+      lanes:          Object.values(laneInit),
+      raceBestLaps:   raceBestLaps,
+      hasQrCheckin:   hasQrCheckin,
+      nextLaneByLane: nextLaneByLane || {},
+      nextMangaInfo:  nextMangaInfo  || null,
+      raceOver:       typeof raceOver !== 'undefined' && raceOver,
+      goStrip:        typeof goStrip !== 'undefined' && goStrip,
+      nextTandaNumber: typeof nextTanda !== 'undefined' && nextTanda ? nextTanda.number : null,
+      goOwner:        typeof goOwner !== 'undefined' ? goOwner : null,
+    }) %>;
+    RACE_DATA.allParticipants = <%- JSON.stringify(allParticipants) %>;
+    const LANG = "<%= lang %>";
+  </script>
+  <!-- ── View picker modal ────────────────────────────────────────────────── -->
+  <div id="viewPickerOverlay" class="vp-overlay" hidden onclick="if(event.target===this)closeViewPicker()">
+    <div class="vp-modal" role="dialog" aria-modal="true" aria-labelledby="vpTitle">
+      <div class="vp-header">
+        <div id="vpTitle" class="vp-title"><%= t('live.elige_como_quieres_ver_la_carrera') %></div>
+        <button class="vp-x" onclick="closeViewPicker()" aria-label="<%= t('common.cerrar') %>">✕</button>
+      </div>
+      <div class="vp-grid">
+        <button class="vp-opt" data-mode="1" onclick="selectView('1')">
+          <div class="vp-thumb vp-thumb--1" aria-hidden="true">
+            <span></span><span></span><span></span><span></span><span></span><span></span>
+          </div>
+          <div class="vp-label"><%= t('live.filas_horizontales') %></div>
+          <div class="vp-desc"><%= t('live.una_fila_por_carril_recomendado_para_pocos') %></div>
+        </button>
+        <button class="vp-opt" data-mode="3" onclick="selectView('3')">
+          <div class="vp-thumb vp-thumb--3" aria-hidden="true">
+            <span><i></i><i></i><i></i><i></i></span>
+            <span><i></i><i></i><i></i><i></i></span>
+            <span><i></i><i></i><i></i><i></i></span>
+            <span><i></i><i></i><i></i><i></i></span>
+          </div>
+          <div class="vp-label"><%= t('live.tarjetas_con_detalles') %></div>
+          <div class="vp-desc"><%= t('live.todas_las_pistas_a_la_vez_con_la_ultima_vuelta') %></div>
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <script src="/socket.io/socket.io.js"></script>
+  <script src="/js/semaphore.js"></script>
+  <script src="/js/reorder-fx.js?v=<%= Date.now() %>"></script>
+  <script src="/js/live.js?v=<%= Date.now() %>"></script>
+  <script>
+    (function () {
+      const resizer = document.getElementById('sidebarResizer');
+      const sidebar = document.getElementById('liveSidebar');
+      if (!resizer || !sidebar) return;
+
+      // .v2: el ancho por defecto pasó a ser automático (el de la tabla); un
+      // ancho guardado de antes lo bloquearía.
+      const KEY = 'pitwall.liveSidebarW.v2';
+      const MIN = 260, MAX_FRACTION = 0.6;
+
+      let saved = null;
+      try { saved = parseInt(localStorage.getItem(KEY), 10); } catch {}
+      if (saved && saved >= MIN) {
+        document.documentElement.style.setProperty('--sidebar-w', saved + 'px');
+      }
+
+      // Pointer events: ratón y pantallas táctiles. Al cambiar el ancho, el
+      // ResizeObserver de live.js reajusta filas (fitLaneCards) y tabla.
+      let startX = 0, startW = 0, moved = false;
+      function onDown(e) {
+        startX = e.clientX;
+        moved = false;
+        startW = sidebar.getBoundingClientRect().width;
+        document.body.classList.add('resizing-sidebar');
+        resizer.classList.add('dragging');
+        resizer.setPointerCapture?.(e.pointerId);
+        resizer.addEventListener('pointermove', onMove);
+        resizer.addEventListener('pointerup', onUp, { once: true });
+        resizer.addEventListener('pointercancel', onUp, { once: true });
+        e.preventDefault();
+      }
+      function onMove(e) {
+        const dx = e.clientX - startX;
+        if (Math.abs(dx) < 3 && !moved) return;   // un clic no es un arrastre
+        // En ancho automático el CSS (.sb-auto: max-content) pisaba --sidebar-w y
+        // el panel no se movía: al empezar a arrastrar pasa a manual.
+        if (!moved) sidebar.classList.remove('sb-auto');
+        moved = true;
+        const maxW = Math.floor(window.innerWidth * MAX_FRACTION);
+        const w = Math.min(maxW, Math.max(MIN, startW - dx));
+        document.documentElement.style.setProperty('--sidebar-w', w + 'px');
+      }
+      function onUp() {
+        document.body.classList.remove('resizing-sidebar');
+        resizer.classList.remove('dragging');
+        resizer.removeEventListener('pointermove', onMove);
+        // Solo un arrastre fija ancho manual: un clic (o el doble clic que lo
+        // devuelve a automático) no debe dejarlo guardado.
+        if (!moved) return;
+        const w = sidebar.getBoundingClientRect().width;
+        try { localStorage.setItem(KEY, String(Math.round(w))); } catch {}
+      }
+      resizer.addEventListener('pointerdown', onDown);
+      resizer.addEventListener('dblclick', () => {
+        document.documentElement.style.removeProperty('--sidebar-w');
+        try { localStorage.removeItem(KEY); } catch {}
+      });
+    })();
+  </script>
+</body>
+</html>

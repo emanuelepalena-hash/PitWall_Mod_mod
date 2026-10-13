@@ -1,0 +1,337 @@
+/*
+ * PitWall — gestión y cronometraje de carreras de slot
+ * Copyright (C) 2026 Víctor González Gómez <vgonzalezgomez@outlook.es>
+ *
+ * This program is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU Affero General Public License as published by
+ * the Free Software Foundation, either version 3 of the License, or
+ * (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU Affero General Public License for more details.
+ *
+ * You should have received a copy of the GNU Affero General Public License
+ * along with this program.  If not, see <https://www.gnu.org/licenses/>.
+ */
+const TrainingService     = require('../services/TrainingService');
+const CompetitionService  = require('../services/CompetitionTrainingService');
+const TimingService       = require('../services/TimingService');
+const SerialService       = require('../services/SerialService');
+const SocketService       = require('../services/SocketService');
+const Settings            = require('../models/Settings');
+const Circuit             = require('../models/Circuit');
+const CompetitionResult   = require('../models/CompetitionTrainingResult');
+const GoOwnerService      = require('../services/GoOwnerService');
+
+// Suma de carriles de TODOS los circuitos configurados (DS-300 o BART); 0 si no aplica.
+function serialLaneTotal() {
+  const mode = Settings.get('serial_mode', '');
+  if (mode !== 'serial' && mode !== 'serial_agg' && mode !== 'bart' && mode !== 'tictac') return 0;
+  try {
+    const cfg = JSON.parse(Settings.get('circuits_serial', '[]'));
+    if (Array.isArray(cfg) && cfg.length > 0) {
+      return cfg.reduce((sum, c) => sum + (parseInt(c.lanes, 10) || 0), 0);
+    }
+  } catch {}
+  return 0;
+}
+
+// Entrar al entreno en el ordenador de la pista le da el GO, salvo que la
+// carrera lo esté usando de verdad (manga en marcha, tanda a medias) o haya
+// pole. Solo al ENTRAR (/training/free, iniciar competición): las recargas
+// solas de la pantalla de entreno no le quitan el GO a una carrera pedida
+// después. Desde otro equipo de la red (TV, móvil) solo se mira.
+function cedeIfLocal(req) {
+  const { isLocal, reqIp } = require('../middleware/accessControl');
+  if (isLocal(reqIp(req))) GoOwnerService.cedeToTraining('se abre el entreno');
+}
+
+function lanesFromSettings() {
+  const total = serialLaneTotal();
+  if (total > 0) return total;                                  // multi-DS: suma de circuitos
+  const circuitId = Settings.get('training_circuit_id', '');    // circuito único (legacy)
+  if (circuitId) {
+    const c = Circuit.findById(parseInt(circuitId, 10));
+    if (c) return c.lanes_count;
+  }
+  return parseInt(Settings.get('sim_lanes', '6'), 10) || 6;     // simulación
+}
+
+// Historial de vueltas de cada carril (Ajustes → Preferencias).
+function historyMode() {
+  return require('../models/Settings').get('training_history_mode', 'recent') === 'best' ? 'best' : 'recent';
+}
+
+class TrainingController {
+
+  // GET /training — modality selection screen
+  static index(req, res) {
+    // Only redirect to live if actively recording (not just standby)
+    if (TrainingService.isActive) return res.redirect('/training/live');
+    TrainingService._standby = false; // clear standby so free/competition can re-prepare
+    res.render('training/index', { t: req.t });
+  }
+
+  // GET /training/free — start free training standby
+  static free(req, res) {
+    const expected = lanesFromSettings();
+    // Re-prepare when not running and the lane count changed (e.g. circuits
+    // added/removed in Settings while in standby).
+    if (!TrainingService.isActive && TrainingService.laneCount !== expected) {
+      TrainingService.prepare(expected);
+    } else if (!TrainingService.isReady) {
+      TrainingService.prepare(expected);
+    }
+    // If the DS-300 is already mid-manga (someone pressed GO before opening
+    // this view), skip standby and start recording immediately so the user
+    // doesn't have to press GO again. Excepción: si el GO es de la carrera o de
+    // la pole, training no debe enganchar.
+    cedeIfLocal(req);
+    if (!TrainingService.isActive && SerialService.isDSRunning() && !GoOwnerService.trainingYields()) {
+      TrainingService.activate();
+      console.log('[TrainingController] /training/free entered with DS already running → auto-activated');
+    }
+    res.redirect('/training/live');
+  }
+
+  // GET /training/competition — setup form (or live if active)
+  static competition(req, res) {
+    if (CompetitionService.isReady) return res.redirect('/training/competition/live');
+    const circuits = Circuit.findAll();
+    const defaultCircuitId = parseInt(Settings.get('training_circuit_id', '') || '0', 10) || null;
+    const fallbackLanes = parseInt(Settings.get('sim_lanes', '6'), 10) || 6;
+    // Pt por defecto: el del circuito de ajustes. Con varios DS no hay selector
+    // de circuito, así que este es el único valor que precarga el campo.
+    const defaultCircuit = defaultCircuitId ? Circuit.findById(defaultCircuitId) : null;
+    const TeamCatalog = require('../models/TeamCatalog');
+    res.render('training/competition', {
+      t: req.t, circuits, defaultCircuitId, fallbackLanes,
+      defaultMinLapMs: defaultCircuit ? (defaultCircuit.min_lap_ms || 0) : 0,
+      serialTotal: serialLaneTotal(),
+      teamsCatalog: TeamCatalog.findAll(),
+    });
+  }
+
+  // POST /training/competition/start
+  static competitionStart(req, res) {
+    const rawParticipants = req.body.participants;
+    if (!rawParticipants || !Array.isArray(rawParticipants) && typeof rawParticipants !== 'object') {
+      return res.redirect('/training/competition');
+    }
+    const participants = Object.values(rawParticipants).map(p => ({
+      name:  String(p.name || '').trim().slice(0, 30),
+      color: String(p.color || '#8b949e'),
+    })).filter(p => p.name);
+
+    if (participants.length < 2) return res.redirect('/training/competition');
+
+    // Circuit picked in the form takes precedence; falls back to settings default
+    const pickedId = parseInt(req.body.circuit_id || '0', 10);
+    const fallbackId = parseInt(Settings.get('training_circuit_id', '') || '0', 10);
+    const circuitId = pickedId || fallbackId;
+    const circuit   = circuitId ? Circuit.findById(circuitId) : null;
+    let numLanes  = circuit ? circuit.lanes_count : Math.max(participants.length, parseInt(Settings.get('sim_lanes', '6'), 10) || 6);
+    // Multi-DS: el total físico de carriles (suma de todos los DS) manda, para
+    // no perder los cruces de los circuitos superiores (p.ej. el 2º circuito).
+    const serialTotal = serialLaneTotal();
+    if (serialTotal > 0) numLanes = serialTotal;
+
+    // Secuencia de rotación de carriles (definida con drag-and-drop en el form).
+    const rawSeq = req.body.lane_sequence;
+    const laneSequence = Array.isArray(rawSeq) ? rawSeq.map(x => parseInt(x, 10)) : [];
+
+    // Vuelta mínima (Pt), en segundos como en el alta de carrera. Por debajo de
+    // ella el cruce es fantasma y se descarta. Un 0 explícito desactiva el
+    // filtro; en blanco hereda la del circuito (con varios DS no hay circuito
+    // elegido, así que ahí el valor lo teclea el usuario).
+    const rawMinLap = String(req.body.min_lap_s ?? '').trim().replace(',', '.');
+    const minLapS   = rawMinLap === '' ? NaN : Number(rawMinLap);
+    const minLapMs  = (Number.isFinite(minLapS) && minLapS >= 0)
+      ? Math.round(minLapS * 1000)
+      : (circuit ? circuit.min_lap_ms || 0 : 0);
+
+    CompetitionService.setup(participants, numLanes, laneSequence, minLapMs);
+    cedeIfLocal(req);
+    res.redirect('/training/competition/live');
+  }
+
+  // GET /training/competition/live
+  static competitionLive(req, res) {
+    if (!CompetitionService.isReady) return res.redirect('/training/competition');
+    res.render('training/live', {
+      t:          req.t,
+      lanes:      CompetitionService.getLanes(),
+      resting:    CompetitionService.getResting(),
+      startedAt:  CompetitionService.startedAt,
+      durationMs: CompetitionService.durationMs,
+      standby:    CompetitionService.isStandby,
+      heatNumber: CompetitionService.heatNumber,
+      isSimulating: SerialService.isSimulating,
+      isBart:       SerialService.isBart,
+      isTicTac:     SerialService.isTicTac,
+      softwareGo:   SerialService.softwareGo,
+      isPaused:     CompetitionService.isPaused,
+      goOwner:         GoOwnerService.publicState(),
+      historyMode:     historyMode(),
+    });
+  }
+
+  // POST /training/competition/stop
+  static competitionStop(req, res) {
+    const sessionId = CompetitionService.sessionId;
+    CompetitionService.stop();
+    try { SerialService.sendStop(); } catch {}   // para el Master BART (no-op DS/sim)
+    // Si la sesión llegó a guardar algún heat, se acaba en sus resultados; si no
+    // (se paró antes de la primera bandera), no hay nada que enseñar.
+    if (sessionId && CompetitionResult.getHeats(sessionId).length > 0) {
+      return res.redirect(`/training/competition/results/${encodeURIComponent(sessionId)}`);
+    }
+    res.redirect('/training/competition');
+  }
+
+  // GET /training/competition/results — sesiones guardadas
+  static competitionResults(req, res) {
+    res.render('training/results-index', { t: req.t, sessions: CompetitionResult.listSessions() });
+  }
+
+  // GET /training/competition/results/:sessionId
+  static competitionResultsShow(req, res) {
+    const sessionId = req.params.sessionId;
+    const heats = CompetitionResult.getHeats(sessionId);
+    if (heats.length === 0) return res.redirect('/training/competition/results');
+    res.render('training/results-show', {
+      t: req.t,
+      sessionId,
+      heats,
+      standings: CompetitionResult.getStandings(sessionId),
+    });
+  }
+
+  // POST /training/competition/results/:sessionId/delete
+  static competitionResultsDelete(req, res) {
+    CompetitionResult.deleteSession(req.params.sessionId);
+    res.redirect('/training/competition/results');
+  }
+
+  // POST /training/go — GO manual para BART/simulación (no llega el race_started
+  // del hardware). Activa el entrenamiento en standby (libre o competición) y
+  // arranca el Master BART. sendStart es no-op en DS-300/simulación.
+  static go(req, res) {
+    const isComp = req.body.mode === 'competition';
+    const svc    = isComp ? CompetitionService : TrainingService;
+    const dest   = isComp ? '/training/competition/live' : '/training/live';
+    if (!svc.isStandby) return res.redirect(dest);
+
+    const durMin = parseInt(req.body.duration_minutes, 10);
+    const durationMs = (Number.isFinite(durMin) && durMin > 0) ? durMin * 60000 : null;
+
+    // Semáforo F1 (3s) y al verde activa + arranca el Master — como en carrera.
+    const SEMAPHORE_MS = 3000;
+    SocketService.emit('race:semaphore');
+    setTimeout(() => {
+      svc.activate(durationMs);
+      SocketService.emit('training:autostart');   // → semáforo verde en el cliente
+      try { SerialService.sendStart(); } catch {}
+    }, SEMAPHORE_MS);
+
+    if (req.xhr || (req.get('accept') || '').includes('application/json')) return res.json({ ok: true, semaphore: true });
+    res.redirect(dest);
+  }
+
+  // POST /training/pause — pausa la grabación + pausa el Master BART
+  static pause(req, res) {
+    const isComp = req.body.mode === 'competition';
+    const svc    = isComp ? CompetitionService : TrainingService;
+    svc.pause();
+    try { SerialService.sendPause(); } catch {}
+    SocketService.emit('training:paused');
+    if (req.xhr || (req.get('accept') || '').includes('application/json')) return res.json({ ok: true });
+    res.redirect(isComp ? '/training/competition/live' : '/training/live');
+  }
+
+  // POST /training/resume — semáforo (3s) y reanuda al verde
+  static resume(req, res) {
+    const isComp = req.body.mode === 'competition';
+    const svc    = isComp ? CompetitionService : TrainingService;
+    const SEMAPHORE_MS = 3000;
+    SocketService.emit('race:semaphore');
+    setTimeout(() => {
+      svc.resume();
+      SocketService.emit('training:resumed');
+      try { SerialService.sendResume(); } catch {}
+    }, SEMAPHORE_MS);
+    if (req.xhr || (req.get('accept') || '').includes('application/json')) return res.json({ ok: true, semaphore: true });
+    res.redirect(isComp ? '/training/competition/live' : '/training/live');
+  }
+
+  // POST /training/halt — STOP: para el Master y vuelve a standby (conserva datos)
+  static halt(req, res) {
+    const isComp = req.body.mode === 'competition';
+    const svc    = isComp ? CompetitionService : TrainingService;
+    svc.stopToStandby();
+    try { SerialService.sendStop(); } catch {}
+    if (req.xhr || (req.get('accept') || '').includes('application/json')) return res.json({ ok: true });
+    res.redirect(isComp ? '/training/competition/live' : '/training/live');
+  }
+
+  // POST /training/start (legacy / manual)
+  static start(req, res) {
+    if (TimingService.isRunning) {
+      return res.status(409).render('error', {
+        t: req.t, code: 409,
+        message: req.t ? 'A race is already running' : 'A race is already running'
+      });
+    }
+    const lanes = Math.max(1, Math.min(32, parseInt(req.body.lanes, 10) || 6));
+    TrainingService.start(lanes);
+    res.redirect('/training/live');
+  }
+
+  // POST /training/stop
+  static stop(req, res) {
+    TrainingService.stop();
+    try { SerialService.sendStop(); } catch {}
+    res.redirect('/training');
+  }
+
+  // POST /training/free/reset
+  static freeReset(req, res) {
+    TrainingService.resetSession();
+    try { SerialService.sendStop(); } catch {}
+    res.redirect('/training/free');
+  }
+
+  // POST /training/exit — botón "Volver" del header: para y resetea todo
+  // (libre y competición) y vuelve a la home.
+  static exit(req, res) {
+    if (CompetitionService.isReady) CompetitionService.stop();
+    TrainingService.resetSession();
+    try { SerialService.sendStop(); } catch {}
+    res.redirect('/');
+  }
+
+  // GET /training/live
+  static live(req, res) {
+    if (!TrainingService.isReady) return res.redirect('/training');
+    const lanes = TrainingService.getLanes();
+    res.render('training/live', {
+      t:              req.t,
+      lanes,
+      startedAt:      TrainingService.startedAt,
+      durationMs:     TrainingService.durationMs,
+      standby:        TrainingService.isStandby,
+      sessionRecords: TrainingService.getSessionRecords(),
+      isSimulating:   SerialService.isSimulating,
+      isBart:         SerialService.isBart,
+      isTicTac:       SerialService.isTicTac,
+      softwareGo:     SerialService.softwareGo,
+      isPaused:       TrainingService.isPaused,
+      goOwner:         GoOwnerService.publicState(),
+      historyMode:     historyMode(),
+    });
+  }
+}
+
+module.exports = TrainingController;

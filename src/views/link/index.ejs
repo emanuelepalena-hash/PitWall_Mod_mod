@@ -1,0 +1,416 @@
+<%- include('../partials/header', { pageTitle: t('common.sincronizar_carrera') }) %>
+
+<% var _cfg = (typeof linkCfg !== 'undefined' && linkCfg) ? linkCfg : { role:'off', slaveUrl:'', token:'' };
+   var _st  = (typeof linkState !== 'undefined' && linkState) ? linkState : { activeMangaId:null, isRunning:false, isPaused:false };
+   var navItems = [
+     { key: 'link',   label: t('common.enlace_maestro_esclavo'), dot: _cfg.role === 'off' ? 'off' : 'ok',
+       icon: '<path d="M10 14a4 4 0 0 0 5.7 0l3-3a4 4 0 0 0-5.7-5.7l-1 1M14 10a4 4 0 0 0-5.7 0l-3 3a4 4 0 0 0 5.7 5.7l1-1"/>' },
+     { key: 'master', label: t('link.desde_el_maestro'), dot: '',
+       icon: '<path d="M12 4v11M7 10l5 5 5-5M5 20h14"/>' },
+     { key: 'file',   label: t('link.desde_fichero'), dot: '',
+       icon: '<path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z"/><path d="M14 3v5h5"/>' },
+   ]; %>
+<div class="vt-page st-page">
+  <div class="st-top">
+    <a href="/" class="vt-back-link">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M19 12H5M12 19l-7-7 7-7"/></svg>
+      <%= t('common.inicio') %>
+    </a>
+    <span class="st-top__sep"></span>
+    <h1 class="st-top__h"><%= t('common.sincronizar_carrera') %></h1>
+    <span class="st-top__fill"></span>
+    <div class="vt-port-pill <%= _cfg.role === 'off' ? 'is-sim' : '' %>">
+      <span class="dot"></span>
+      <%= _cfg.role === 'master' ? (t('link.este_pc_es_maestro_ds'))
+        : _cfg.role === 'slave' ? (t('link.este_pc_es_esclavo_bart'))
+        : (t('link.enlace_desactivado')) %>
+    </div>
+  </div>
+
+  <div class="st-layout">
+    <nav class="st-nav" aria-label="<%= t('common.secciones') %>">
+      <% navItems.forEach(function (it) { %>
+        <button type="button" class="st-nav__item <%= it.key === 'link' ? 'is-active' : '' %>" data-sec="<%= it.key %>">
+          <svg viewBox="0 0 24 24"><%- it.icon %></svg>
+          <span class="st-nav__lbl"><%= it.label %></span>
+          <span class="st-dot <%= it.dot ? 'st-dot--' + it.dot : '' %>"></span>
+        </button>
+      <% }) %>
+      <a class="st-nav__item" href="/link/compare">
+        <svg viewBox="0 0 24 24"><path d="M8 3v18M16 3v18M4 8h4M4 16h4M16 8h4M16 16h4"/></svg>
+        <span class="st-nav__lbl"><%= t('link.comparar_ds_bart') %></span>
+        <svg class="st-chev" viewBox="0 0 24 24"><path d="M9 6l6 6-6 6"/></svg>
+      </a>
+      <div class="st-nav__note">
+        <span><%= t('link.el_esclavo_bart_descarga_la_carrera_del_maestro') %></span>
+      </div>
+    </nav>
+
+    <div class="st-main">
+
+      <!-- ══ Enlace maestro / esclavo ═════════════════════════════════════ -->
+      <section class="st-sec is-active" data-sec="link">
+        <header class="st-sec__h">
+          <h2><%= t('common.enlace_maestro_esclavo') %></h2>
+          <p><%= t('link.el_maestro_ds_reenvia_el_estado_de_carrera_al') %></p>
+        </header>
+
+        <form id="linkCfgForm" class="st-card" onsubmit="return false">
+          <div class="st-row st-row--wrap">
+            <div class="st-row__txt">
+              <label class="st-row__t" for="linkRole"><%= t('link.rol_de_este_pc') %></label>
+            </div>
+            <div class="vt-selw st-row__ctl st-row__ctl--wide">
+              <select id="linkRole">
+                <option value="off"    <%= _cfg.role === 'off'    ? 'selected' : '' %>><%= t('link.off_desactivado') %></option>
+                <option value="master" <%= _cfg.role === 'master' ? 'selected' : '' %>>Master (DS)</option>
+                <option value="slave"  <%= _cfg.role === 'slave'  ? 'selected' : '' %>>Slave (BART)</option>
+              </select>
+            </div>
+          </div>
+          <div class="st-row st-row--wrap" id="linkSlaveUrlField" style="<%= _cfg.role === 'master' ? '' : 'display:none' %>">
+            <div class="st-row__txt">
+              <label class="st-row__t" for="linkSlaveUrl"><%= t('link.direccion_del_esclavo') %></label>
+              <div class="st-row__d"><%= t('link.solo_en_el_maestro') %></div>
+            </div>
+            <input type="text" id="linkSlaveUrl" class="vt-inp is-mono st-row__ctl st-row__ctl--wide"
+                   placeholder="192.168.10.108:3000" autocomplete="off" spellcheck="false" value="<%= _cfg.slaveUrl %>">
+          </div>
+          <div class="st-row st-row--wrap">
+            <div class="st-row__txt">
+              <label class="st-row__t" for="linkToken"><%= t('link.token_compartido') %></label>
+              <div class="st-row__d"><%= t('link.el_mismo_en_los_dos_pcs') %></div>
+            </div>
+            <input type="text" id="linkToken" class="vt-inp is-mono st-row__ctl st-row__ctl--wide"
+                   placeholder="<%= t('link.ph_secreto') %>" autocomplete="off" spellcheck="false" value="<%= _cfg.token %>">
+          </div>
+          <div class="st-row st-row--wrap">
+            <div class="st-row__txt">
+              <div class="st-row__t st-row__t--sm"><%= t('link.cronometro_de_este_pc') %></div>
+              <div class="st-row__d is-mono" id="linkLiveState">
+                <%= _st.activeMangaId != null
+                    ? (t('common.manga') + ' ' + _st.activeMangaId + ' · ' + (_st.isRunning ? 'running' : _st.isPaused ? 'paused' : 'idle'))
+                    : (t('link.sin_manga_activa')) %>
+              </div>
+            </div>
+            <span id="cfgMsg" class="link-msg" style="display:none"></span>
+            <button type="button" id="btnSaveCfg" class="vt-btn vt-btn--primary"><%= t('link.guardar_enlace') %></button>
+          </div>
+        </form>
+      </section>
+
+      <!-- ══ Desde el maestro ═════════════════════════════════════════════ -->
+      <section class="st-sec" data-sec="master">
+        <header class="st-sec__h">
+          <h2><%= t('link.desde_el_maestro') %></h2>
+          <p><%= t('link.busca_las_carreras_del_pc_maestro_por_la_red_y') %></p>
+        </header>
+        <div class="st-card">
+          <div class="st-row st-row--wrap">
+            <div class="st-row__txt">
+              <label class="st-row__t" for="masterHost"><%= t('link.direccion_del_maestro') %></label>
+              <div class="st-row__d"><%= t('link.host_o_ip_puerto') %></div>
+            </div>
+            <div class="lk-search">
+              <input type="text" id="masterHost" class="vt-inp is-mono" placeholder="192.168.1.50:3000" autocomplete="off" spellcheck="false">
+              <button type="button" id="btnSearch" class="vt-btn vt-btn--primary"><%= t('link.buscar_carreras') %></button>
+            </div>
+          </div>
+          <div class="st-row st-row--hint lk-msg-row"><div id="searchMsg" class="link-msg" style="display:none"></div></div>
+        </div>
+
+        <div id="racesWrap" style="display:none">
+          <div class="vt-table-card lk-table">
+            <table class="vt-table">
+              <thead>
+                <tr>
+                  <th><%= t('common.carrera') %></th>
+                  <th class="is-num"><%= t('link.tandas') %></th>
+                  <th class="is-num"><%= t('client.common.pilotos') %></th>
+                  <th><%= t('link.clave') %></th>
+                  <th class="is-actions"></th>
+                </tr>
+              </thead>
+              <tbody id="racesBody"></tbody>
+            </table>
+          </div>
+        </div>
+      </section>
+
+      <!-- ══ Desde fichero ════════════════════════════════════════════════ -->
+      <section class="st-sec" data-sec="file">
+        <header class="st-sec__h">
+          <h2><%= t('link.desde_fichero') %></h2>
+          <p><%= t('link.plan_b_sin_red_pega_el_json_exportado_del') %></p>
+        </header>
+        <div class="st-card">
+          <div class="st-row st-row--wrap st-row--top lk-json">
+            <label class="st-row__t st-row__t--sm" for="importJson"><%= t('link.contenido_json') %></label>
+            <textarea id="importJson" class="vt-inp is-mono" rows="9" placeholder='{"raceKey":"…","race":{…}}' spellcheck="false"></textarea>
+          </div>
+          <div class="st-row st-row--wrap">
+            <span class="st-top__fill"></span>
+            <span id="importMsg" class="link-msg" style="display:none"></span>
+            <button type="button" id="btnImport" class="vt-btn vt-btn--primary"><%= t('common.importar') %></button>
+          </div>
+        </div>
+      </section>
+    </div>
+  </div>
+</div>
+
+<style>
+  .link-msg { font-size: 13.5px; font-weight: 600; padding: 6px 0; }
+  .link-msg.is-ok   { color: #8ee6ab; }
+  .link-msg.is-warn { color: #f3d579; }
+  .link-msg.is-bad  { color: #ff8e95; }
+  .link-msg.is-mute { color: var(--vt-mute); font-weight: 500; }
+  .link-cell-msg { font-size: 12.5px; font-weight: 600; margin-top: 4px; }
+  .link-cell-msg.is-ok   { color: #8ee6ab; }
+  .link-cell-msg.is-warn { color: #f3d579; }
+  .link-cell-msg.is-bad  { color: #ff8e95; }
+</style>
+
+<script>
+(function () {
+  var LANG = <%- JSON.stringify(lang) %>;
+  var T = {
+    needHost: I18N.t('client.link.needHost'),
+    searching: I18N.t('client.link.searching'),
+    netErr: I18N.t('client.link.netErr'),
+    noRaces: I18N.t('client.link.noRaces'),
+    found: function (n) { return n === 1 ? I18N.t('client.link.found_1') : I18N.t('client.link.found_n', { n: n }); },
+    create: I18N.t('client.link.create'),
+    creating: I18N.t('client.link.creating'),
+    created: function (id) { return I18N.t('client.link.created', { id: id }); },
+    exists: function (id) { return I18N.t('client.link.exists', { id: id }); },
+    needJson: I18N.t('client.link.needJson'),
+    badJson: I18N.t('client.link.badJson'),
+    importing: I18N.t('client.link.importing'),
+    imported: function (id) { return I18N.t('client.link.imported', { id: id }); },
+  };
+
+  function esc(s) {
+    return String(s == null ? '' : s).replace(/[&<>"']/g, function (c) {
+      return { '&':'&amp;', '<':'&lt;', '>':'&gt;', '"':'&quot;', "'":'&#39;' }[c];
+    });
+  }
+  function setMsg(el, text, tone) {
+    el.className = 'link-msg' + (tone ? ' is-' + tone : '');
+    el.textContent = text;
+    el.style.display = text ? '' : 'none';
+  }
+
+  var hostInp   = document.getElementById('masterHost');
+  var btnSearch = document.getElementById('btnSearch');
+  var searchMsg = document.getElementById('searchMsg');
+  var racesWrap = document.getElementById('racesWrap');
+  var racesBody = document.getElementById('racesBody');
+
+  function currentHost() { return (hostInp.value || '').trim(); }
+
+  function fmtType(r) {
+    var parts = [];
+    if (r.type)   parts.push(r.type);
+    if (r.format) parts.push(r.format);
+    return parts.join(' · ');
+  }
+
+  function renderRaces(races) {
+    racesBody.innerHTML = '';
+    races.forEach(function (r) {
+      var tr = document.createElement('tr');
+      var key = r.raceKey ? String(r.raceKey).slice(0, 8) : '—';
+      var typeLine = fmtType(r);
+      tr.innerHTML =
+        '<td class="is-name">' + esc(r.name) +
+          (typeLine ? '<div class="is-mute" style="font-weight:500;font-size:12.5px;margin-top:2px">' + esc(typeLine) + '</div>' : '') +
+          '<div class="link-cell-msg" style="display:none"></div>' +
+        '</td>' +
+        '<td class="is-num">' + (r.tandaCount != null ? esc(r.tandaCount) : '—') + '</td>' +
+        '<td class="is-num">' + (r.driverCount != null ? esc(r.driverCount) : '—') + '</td>' +
+        '<td class="is-mono">' + esc(key) + '</td>' +
+        '<td class="is-actions"><button type="button" class="vt-btn vt-btn--ghost vt-btn--sm">' + esc(T.create) + '</button></td>';
+
+      var btn    = tr.querySelector('button');
+      var cellMsg = tr.querySelector('.link-cell-msg');
+      btn.addEventListener('click', function () { provision(r, btn, cellMsg); });
+      racesBody.appendChild(tr);
+    });
+    racesWrap.style.display = '';
+  }
+
+  function provision(race, btn, cellMsg) {
+    var host = currentHost();
+    if (!host) { setMsg(searchMsg, T.needHost, 'bad'); return; }
+    btn.disabled = true;
+    var prev = btn.textContent;
+    btn.textContent = T.creating;
+    cellMsg.style.display = 'none';
+
+    fetch('/link/provision', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ masterUrl: host, raceId: race.id }),
+    })
+      .then(function (res) { return res.json().then(function (b) { return { status: res.status, body: b }; }); })
+      .then(function (r) {
+        if (r.status === 200 && r.body.ok) {
+          cellMsg.className = 'link-cell-msg is-ok';
+          cellMsg.textContent = T.created(r.body.raceId);
+          cellMsg.style.display = '';
+          btn.textContent = prev;      // keep enabled? leave disabled to avoid dup — re-enable
+          btn.disabled = false;
+        } else if (r.status === 409) {
+          cellMsg.className = 'link-cell-msg is-warn';
+          cellMsg.textContent = T.exists(r.body.existingId);
+          cellMsg.style.display = '';
+          btn.textContent = prev;
+          btn.disabled = false;
+        } else {
+          cellMsg.className = 'link-cell-msg is-bad';
+          cellMsg.textContent = (r.body && r.body.error) ? r.body.error : T.netErr;
+          cellMsg.style.display = '';
+          btn.textContent = prev;
+          btn.disabled = false;
+        }
+      })
+      .catch(function () {
+        cellMsg.className = 'link-cell-msg is-bad';
+        cellMsg.textContent = T.netErr;
+        cellMsg.style.display = '';
+        btn.textContent = prev;
+        btn.disabled = false;
+      });
+  }
+
+  function search() {
+    var host = currentHost();
+    if (!host) { setMsg(searchMsg, T.needHost, 'bad'); return; }
+    btnSearch.disabled = true;
+    racesWrap.style.display = 'none';
+    setMsg(searchMsg, T.searching, 'mute');
+
+    fetch('/link/master/races?url=' + encodeURIComponent(host))
+      .then(function (res) { return res.json().then(function (b) { return { status: res.status, body: b }; }); })
+      .then(function (r) {
+        btnSearch.disabled = false;
+        if (r.status !== 200 || !r.body.races) {
+          setMsg(searchMsg, (r.body && r.body.error) ? r.body.error : T.netErr, 'bad');
+          return;
+        }
+        var races = r.body.races || [];
+        if (!races.length) { setMsg(searchMsg, T.noRaces, 'warn'); return; }
+        setMsg(searchMsg, T.found(races.length), 'ok');
+        renderRaces(races);
+      })
+      .catch(function () {
+        btnSearch.disabled = false;
+        setMsg(searchMsg, T.netErr, 'bad');
+      });
+  }
+
+  btnSearch.addEventListener('click', search);
+  hostInp.addEventListener('keydown', function (e) { if (e.key === 'Enter') { e.preventDefault(); search(); } });
+
+  // ── Config del enlace (rol / URL / token) ─────────────────────────
+  var roleSel      = document.getElementById('linkRole');
+  var slaveUrlFld  = document.getElementById('linkSlaveUrlField');
+  var slaveUrlInp  = document.getElementById('linkSlaveUrl');
+  var tokenInp     = document.getElementById('linkToken');
+  var btnSaveCfg   = document.getElementById('btnSaveCfg');
+  var cfgMsg       = document.getElementById('cfgMsg');
+
+  function syncRoleUI() {
+    slaveUrlFld.style.display = (roleSel.value === 'master') ? '' : 'none';
+  }
+  if (roleSel) roleSel.addEventListener('change', syncRoleUI);
+
+  if (btnSaveCfg) btnSaveCfg.addEventListener('click', function () {
+    btnSaveCfg.disabled = true;
+    setMsg(cfgMsg, I18N.t('client.link.guardando'), 'mute');
+    fetch('/link/config', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'Accept': 'application/json' },
+      body: JSON.stringify({
+        role: roleSel.value,
+        slaveUrl: (slaveUrlInp.value || '').trim(),
+        token: (tokenInp.value || '').trim(),
+      }),
+    })
+      .then(function (res) { return res.json().then(function (b) { return { status: res.status, body: b }; }); })
+      .then(function (r) {
+        btnSaveCfg.disabled = false;
+        if (r.status === 200 && r.body.ok) {
+          setMsg(cfgMsg, I18N.t('client.link.enlace_guardado'), 'ok');
+        } else {
+          setMsg(cfgMsg, (r.body && r.body.error) ? r.body.error : (I18N.t('client.link.no_se_pudo_guardar')), 'bad');
+        }
+      })
+      .catch(function () {
+        btnSaveCfg.disabled = false;
+        setMsg(cfgMsg, I18N.t('client.link.no_se_pudo_guardar'), 'bad');
+      });
+  });
+
+  // ── Importar desde fichero ─────────────────────────────────────
+  var btnImport  = document.getElementById('btnImport');
+  var importJson = document.getElementById('importJson');
+  var importMsg  = document.getElementById('importMsg');
+
+  // ── Secciones (menú lateral) ──────────────────────────────────
+  var SECS = Array.prototype.map.call(document.querySelectorAll('.st-sec'), function (s) { return s.dataset.sec; });
+  function showSection(sec) {
+    if (SECS.indexOf(sec) < 0) sec = SECS[0];
+    document.querySelectorAll('.st-sec').forEach(function (s) { s.classList.toggle('is-active', s.dataset.sec === sec); });
+    document.querySelectorAll('.st-nav__item[data-sec]').forEach(function (b) {
+      var on = b.dataset.sec === sec;
+      b.classList.toggle('is-active', on);
+      if (on) b.setAttribute('aria-current', 'true'); else b.removeAttribute('aria-current');
+    });
+    try { sessionStorage.setItem('pw.link.sec', sec); } catch (e) {}
+  }
+  document.querySelectorAll('.st-nav__item[data-sec]').forEach(function (b) {
+    b.addEventListener('click', function () { showSection(b.dataset.sec); history.replaceState(null, '', '#' + b.dataset.sec); });
+  });
+  (function () {
+    var saved = null;
+    try { saved = sessionStorage.getItem('pw.link.sec'); } catch (e) {}
+    showSection(location.hash.slice(1) || saved || SECS[0]);
+  })();
+
+  btnImport.addEventListener('click', function () {
+    var raw = (importJson.value || '').trim();
+    if (!raw) { setMsg(importMsg, T.needJson, 'bad'); return; }
+    var payload;
+    try { payload = JSON.parse(raw); }
+    catch (e) { setMsg(importMsg, T.badJson, 'bad'); return; }
+
+    btnImport.disabled = true;
+    setMsg(importMsg, T.importing, 'mute');
+
+    fetch('/link/import', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    })
+      .then(function (res) { return res.json().then(function (b) { return { status: res.status, body: b }; }); })
+      .then(function (r) {
+        btnImport.disabled = false;
+        if (r.status === 200 && r.body.ok) {
+          setMsg(importMsg, T.imported(r.body.raceId), 'ok');
+        } else if (r.status === 409) {
+          setMsg(importMsg, T.exists(r.body.existingId), 'warn');
+        } else {
+          setMsg(importMsg, (r.body && r.body.error) ? r.body.error : T.netErr, 'bad');
+        }
+      })
+      .catch(function () {
+        btnImport.disabled = false;
+        setMsg(importMsg, T.netErr, 'bad');
+      });
+  });
+})();
+</script>
+
+<%- include('../partials/footer') %>

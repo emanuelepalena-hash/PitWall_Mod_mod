@@ -1,0 +1,187 @@
+<%- include('../partials/header', { lang, pageTitle: (t('shifts-report.informe_de_turnos')) + ' — ' + race.name }) %>
+
+<%
+// Informe FINAL: la carrera ya rodó, así que el mínimo se juzga de verdad
+// (reglas.final === true, lo pone _reportData). fmtHms viene de app.locals.
+const exportando = typeof hideNavbar !== 'undefined' && hideNavbar;
+function stamp(ms) {
+  if (!ms) return '—';
+  return new Date(ms).toLocaleTimeString();
+}
+function etiqueta(c) {
+  if (c.overMax)  return { cls: 'is-bad',  txt: t('shifts-report.pasado_de_tiempo') };
+  if (c.overRuns) return { cls: 'is-bad',  txt: t('shifts-report.pasado_de_turnos') };
+  if (c.underMin) return { cls: 'is-bad',  txt: t('shifts-report.bajo_minimo') };
+  if (c.nearMax)  return { cls: 'is-warn', txt: t('shifts-report.al_90_del_max') };
+  if (c.nearRuns) return { cls: 'is-warn', txt: t('common.ultimo_turno') };
+  return { cls: 'is-ok', txt: 'OK' };
+}
+%>
+
+<style>
+/* El informe se imprime o se adjunta a una reclamación: sin cromo, sin cortes
+   de tabla a mitad de fila, y las infracciones legibles también en blanco y negro. */
+@media print {
+  .vt-navbar, .vt-footer, .vt-back-link, .vt-head__actions, .sr-noprint { display: none !important; }
+  .vt-page { background: #fff !important; }
+  body, .vt-wrap { color: #000 !important; }
+  .vt-table-card { break-inside: avoid; box-shadow: none !important; }
+  .vt-table tr { break-inside: avoid; }
+  .vt-badge.is-bad  { border: 1.5px solid #000 !important; font-weight: 700; }
+  .vt-badge.is-warn { border: 1px dashed #000 !important; }
+  a[href]:after { content: ""; }   /* no imprimir las URLs */
+}
+.sr-kpis { display:flex; gap:12px; flex-wrap:wrap; margin:14px 0 4px; }
+.sr-kpi { flex:1 1 150px; background:var(--vt-card, #161b22); border:1px solid var(--vt-border, #30363d);
+          border-radius:10px; padding:10px 14px; }
+.sr-kpi__n { font-size:24px; font-weight:700; line-height:1.1; }
+.sr-kpi__l { font-size:12px; color:var(--vt-mute, #8b949e); margin-top:2px; }
+.sr-kpi.is-bad .sr-kpi__n { color:#f85149; }
+.sr-manual { font-size:11px; color:var(--vt-mute, #8b949e); }
+</style>
+
+<div class="vt-page vt-page--shifts-report">
+  <div class="vt-wrap">
+
+    <% if (!exportando) { %>
+      <a href="/races/<%= race.id %>/shifts" class="vt-back-link">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M19 12H5M12 19l-7-7 7-7"/></svg>
+        <%= t('shifts-report.volver_al_historico') %>
+      </a>
+    <% } %>
+
+    <%- include('../partials/club-brand') %>
+
+    <div class="vt-head">
+      <div class="vt-head__title">
+        <h1><%= t('shifts-report.informe_de_turnos_de_piloto') %></h1>
+        <span class="vt-cnt"><%= race.name %></span>
+      </div>
+      <% if (!exportando) { %>
+        <div class="vt-head__actions sr-noprint">
+          <a href="/races/<%= race.id %>/shifts/report.html" class="vt-btn vt-btn--ghost vt-btn--sm">HTML</a>
+          <a href="/races/<%= race.id %>/shifts/report.xlsx?lang=<%= lang %>" class="vt-btn vt-btn--ghost vt-btn--sm">Excel</a>
+          <button onclick="window.print()" class="vt-btn vt-btn--sm"><%= t('common.imprimir') %></button>
+        </div>
+      <% } %>
+    </div>
+
+    <!-- Reglas aplicadas: sin esto el informe no es defendible -->
+    <div class="sr-kpis">
+      <div class="sr-kpi">
+        <div class="sr-kpi__n"><%= reglas.minMs ? fmtHms(reglas.minMs) : '—' %></div>
+        <div class="sr-kpi__l"><%= t('shifts-report.tiempo_minimo_por_piloto') %></div>
+      </div>
+      <div class="sr-kpi">
+        <div class="sr-kpi__n"><%= reglas.maxMs ? fmtHms(reglas.maxMs) : '—' %></div>
+        <div class="sr-kpi__l"><%= t('shifts-report.tiempo_maximo_por_piloto') %></div>
+      </div>
+      <div class="sr-kpi">
+        <div class="sr-kpi__n"><%= reglas.maxRuns || '—' %></div>
+        <div class="sr-kpi__l"><%= t('shifts-report.turnos_maximos') %></div>
+      </div>
+      <div class="sr-kpi <%= infracciones.length ? 'is-bad' : '' %>">
+        <div class="sr-kpi__n"><%= infracciones.length %></div>
+        <div class="sr-kpi__l"><%= t('shifts-report.infracciones') %></div>
+      </div>
+    </div>
+
+    <% if (manuales > 0) { %>
+      <p class="sr-manual" style="margin:10px 0 0">
+        <%= t('shifts-report.atencion_manuales_turno_s_con_tiempo', { manuales: manuales }) %>
+      </p>
+    <% } %>
+
+    <!-- ── Tiempo total por piloto ─────────────────────────────────────── -->
+    <div class="sc-section" style="margin-top:18px">
+      <div class="vt-sec-lbl"><%= t('common.tiempo_total_por_piloto') %></div>
+      <% if (summary.length === 0) { %>
+        <p style="color:var(--vt-mute)"><%= t('shifts-report.no_hay_pilotos_inscritos_con_perfil_de_catalogo') %></p>
+      <% } else { %>
+        <div class="vt-table-card">
+          <table class="vt-table">
+            <thead>
+              <tr>
+                <th><%= t('client.common.piloto') %></th>
+                <th><%= t('client.common.categoria') %></th>
+                <th class="is-num"><%= t('shifts-report.tiempo_total') %></th>
+                <th class="is-num"><%= t('shifts-report.turnos') %></th>
+                <th><%= t('common.estado') %></th>
+              </tr>
+            </thead>
+            <tbody>
+              <% summary.forEach(r => { const b = etiqueta(r.compliance); %>
+                <tr>
+                  <td class="is-name">
+                    <span class="vt-cat-dot vt-cat--<%= r.profile_category %>" style="margin-right:6px"></span><%= r.profile_name %>
+                    <% if (r.manual_count > 0) { %>
+                      <span class="sr-manual" title="<%= t('shifts-report.incluye_tiempo_introducido_a_mano') %>">
+                        · <%= t('shifts-report.manual') %> ×<%= r.manual_count %>
+                      </span>
+                    <% } %>
+                  </td>
+                  <td class="is-mute"><%= r.profile_category %></td>
+                  <td class="is-num is-mono is-name"><%= fmtHms(r.total_ms) %></td>
+                  <td class="is-num is-mono"><%= r.runs_count %><% if (reglas.maxRuns > 0) { %><span class="is-mute">/<%= reglas.maxRuns %></span><% } %></td>
+                  <td><span class="vt-badge <%= b.cls %>"><span class="vt-badge__d"></span><%= b.txt %></span></td>
+                </tr>
+              <% }) %>
+            </tbody>
+          </table>
+        </div>
+      <% } %>
+    </div>
+
+    <!-- ── Cronología: de dónde sale cada total ────────────────────────── -->
+    <div class="sc-section" style="margin-top:22px">
+      <div class="vt-sec-lbl"><%= t('shifts-report.cronologia_de_turnos_por_manga') %></div>
+      <% const conTurnos = mangas.filter(m => m.shifts && m.shifts.length); %>
+      <% if (!conTurnos.length) { %>
+        <p style="color:var(--vt-mute)"><%= t('shifts-report.no_se_registro_ningun_turno') %></p>
+      <% } else { %>
+        <% conTurnos.forEach(m => { %>
+          <div class="vt-table-card" style="margin-top:10px">
+            <div class="vt-sec-lbl" style="padding:8px 12px 0">
+              <%= t('common.tanda') %> <%= m.tanda_number || '—' %> · <%= t('shifts-report.manga') %> <%= m.number %>
+            </div>
+            <table class="vt-table">
+              <thead>
+                <tr>
+                  <th class="is-num"><%= t('client.common.carril') %></th>
+                  <th><%= t('client.common.piloto') %></th>
+                  <th><%= t('shifts-report.entro') %></th>
+                  <th><%= t('shifts-report.salio') %></th>
+                  <th class="is-num"><%= t('common.tiempo') %></th>
+                  <th><%= t('shifts-report.origen') %></th>
+                </tr>
+              </thead>
+              <tbody>
+                <% m.shifts.forEach(s => { %>
+                  <tr>
+                    <td class="is-num is-mono"><%= s.lane %></td>
+                    <td class="is-name"><%= s.driver_name %></td>
+                    <td class="is-mono is-mute"><%= stamp(s.started_at_ms) %></td>
+                    <td class="is-mono is-mute"><%= stamp(s.ended_at_ms) %></td>
+                    <td class="is-num is-mono"><%= fmtHms(s.driving_ms) %></td>
+                    <td>
+                      <% if (s.manual) { %>
+                        <span class="vt-badge is-warn"><span class="vt-badge__d"></span><%= t('client.common.manual') %></span>
+                      <% } else if (s.started_at_ms == null) { %>
+                        <span class="vt-badge is-info"><span class="vt-badge__d"></span><%= t('shifts-report.no_rodo') %></span>
+                      <% } else { %>
+                        <span class="is-mute">QR</span>
+                      <% } %>
+                    </td>
+                  </tr>
+                <% }) %>
+              </tbody>
+            </table>
+          </div>
+        <% }) %>
+      <% } %>
+    </div>
+
+  </div>
+</div>
+
+<%- include('../partials/footer') %>

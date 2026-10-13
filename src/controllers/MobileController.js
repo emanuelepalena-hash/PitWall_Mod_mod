@@ -1,0 +1,650 @@
+/*
+ * PitWall — gestión y cronometraje de carreras de slot
+ * Copyright (C) 2026 Víctor González Gómez <vgonzalezgomez@outlook.es>
+ *
+ * This program is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU Affero General Public License as published by
+ * the Free Software Foundation, either version 3 of the License, or
+ * (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU Affero General Public License for more details.
+ *
+ * You should have received a copy of the GNU Affero General Public License
+ * along with this program.  If not, see <https://www.gnu.org/licenses/>.
+ */
+const TimingService     = require('../services/TimingService');
+const TrainingService   = require('../services/TrainingService');
+const CompetitionTrainingService = require('../services/CompetitionTrainingService');
+const CompetitionTrainingResult  = require('../models/CompetitionTrainingResult');
+const PoleTimingService = require('../services/PoleTimingService');
+const PoleSession       = require('../models/PoleSession');
+const Race       = require('../models/Race');
+const Lap        = require('../models/Lap');
+const TireChange = require('../models/TireChange');
+const Team       = require('../models/Team');
+const LapTracking = require('../models/LapTracking');
+const db = require('../config/database');
+
+// Caché del dossier de resultados (ver buildStatsSnapshot).
+const SNAPSHOT_TTL_MS    = 1000;
+const SNAPSHOT_MAX_RACES = 8;
+const _snapshotCache = new Map();   // raceId → { ts, mut, value }
+
+// Entreno que la app móvil puede seguir ahora mismo: el de competición si
+// está montado (en marcha o en standby entre heats: el piloto se conecta
+// mientras espera su turno) y, si no, el libre cuando está en marcha.
+function entrenoEnCurso() {
+  if (CompetitionTrainingService.isReady) return CompetitionTrainingService;
+  if (TrainingService.isActive) return TrainingService;
+  return null;
+}
+
+// `created_at` de SQLite es UTC sin zona ('YYYY-MM-DD HH:MM:SS'): lo servimos
+// en ISO para que la app no tenga que adivinar la zona.
+function isoUtc(sqliteDate) {
+  return sqliteDate ? `${String(sqliteDate).replace(' ', 'T')}Z` : null;
+}
+
+const MobileController = {
+  // GET /api/mobile/session
+  session(req, res) {
+    if (TimingService.isRunning) {
+      const { laneMap, race, manga, startTime } = TimingService.session;
+      const participants = Object.values(laneMap).map(l => ({
+        lane:  l.lane,
+        name:  l.name,
+        color: l.color,
+      }));
+      return res.json({
+        type:       'race',
+        name:       race.name,
+        mangaId:    manga.id,
+        mangaNum:   manga.number,
+        elapsedMs:  Date.now() - startTime,
+        durationMs: (race.manga_duration_minutes || 5) * 60_000,
+        participants,
+      });
+    }
+
+    if (TimingService._pendingSetup) {
+      const { manga, race, lanes } = TimingService._pendingSetup;
+      const participants = lanes
+        .filter(l => !l.is_rest)
+        .map(l => ({
+          lane:  l.lane,
+          name:  l.team_name || l.driver_name || `Lane ${l.lane}`,
+          color: l.team_color || '#8b949e',
+        }));
+      return res.json({
+        type:       'race',
+        name:       race.name,
+        mangaId:    manga.id,
+        mangaNum:   manga.number,
+        elapsedMs:  0,
+        durationMs: (race.manga_duration_minutes || 5) * 60_000,
+        participants,
+      });
+    }
+
+    const entreno = entrenoEnCurso();
+    if (entreno) {
+      const participants = entreno.getLanes().map(l => ({
+        lane:  l.lane,
+        name:  l.participantName || `Carril ${l.lane}`,
+        color: l.color || '#22c55e',
+      }));
+      return res.json({
+        type:         'training',
+        name:         entreno === CompetitionTrainingService ? 'Entreno de competición' : 'Entrenamiento',
+        participants,
+      });
+    }
+
+    const poleSession = db
+      .prepare(`SELECT ps.*, r.name as race_name
+                FROM pole_sessions ps
+                JOIN races r ON r.id = ps.race_id
+                WHERE ps.status = 'in_progress'
+                LIMIT 1`)
+      .get();
+    if (poleSession) {
+      const entries = db
+        .prepare('SELECT * FROM pole_entries WHERE pole_session_id = ? ORDER BY order_idx')
+        .all(poleSession.id);
+      const participants = entries.map((e, i) => ({
+        lane:      poleSession.lane,
+        entryId:   e.id,
+        orderIdx:  e.order_idx ?? i,
+        name:      e.entity_name,
+        color:     '#f59e0b',
+      }));
+      return res.json({
+        type:         'pole',
+        name:         poleSession.race_name,
+        poleSessionId: poleSession.id,
+        participants,
+      });
+    }
+
+    return res.json({ type: 'none' });
+  },
+
+  // Internal: build the full race-detail payload that the mobile app needs
+  // to show pickers and follow a participant. Shared by /races/current and
+  // /races/:id endpoints.
+  _buildRaceDetail(race) {
+    // Active manga (if any) — drives the "is it my turn now?" decision on the app side.
+    // TimingService marks the running manga as `status='active'` (not 'running').
+    const activeManga = db.prepare(`
+      SELECT m.id, m.number, m.tanda_id, t.number AS tanda_number, m.started_at
+      FROM mangas m JOIN tandas t ON t.id = m.tanda_id
+      WHERE m.race_id = ? AND m.status = 'active'
+      LIMIT 1
+    `).get(race.id);
+
+    // All manga_lanes for this race in tanda+manga order, joined with the
+    // manga number so we can build each participant's schedule.
+    const planRows = db.prepare(`
+      SELECT ml.lane, ml.team_id, ml.driver_id, ml.is_rest,
+             m.id AS manga_id, m.number AS manga_number, m.status AS manga_status,
+             t.number AS tanda_number
+      FROM manga_lanes ml
+      JOIN mangas m ON m.id = ml.manga_id
+      JOIN tandas t ON t.id = m.tanda_id
+      WHERE t.race_id = ?
+      ORDER BY t.number ASC, m.number ASC, ml.lane ASC
+    `).all(race.id);
+
+    const isTeam = race.format === 'team';
+    const participants = isTeam
+      ? db.prepare('SELECT id, name, color FROM teams WHERE race_id = ? ORDER BY id').all(race.id)
+      : db.prepare('SELECT id, name FROM drivers WHERE race_id = ? ORDER BY id').all(race.id);
+
+    const planByEntity = {};
+    planRows.forEach(r => {
+      const key = isTeam ? r.team_id : r.driver_id;
+      if (key == null) return;
+      if (!planByEntity[key]) planByEntity[key] = [];
+      planByEntity[key].push({
+        tandaNum:    r.tanda_number,
+        mangaId:     r.manga_id,
+        mangaNum:    r.manga_number,
+        lane:        r.lane,
+        isRest:      !!r.is_rest,
+        mangaStatus: r.manga_status,
+      });
+    });
+
+    const out = participants.map(p => ({
+      id:    p.id,
+      name:  p.name,
+      color: p.color || '#8b949e',
+      mangas: planByEntity[p.id] || [],
+    }));
+
+    return {
+      race: {
+        id:                race.id,
+        name:              race.name,
+        format:            race.format,                // 'team' | 'individual'
+        type:              race.type,                  // 'club' | 'championship'
+        status:            race.status,                // 'active' | 'pending'
+        lanesCount:        race.lanes_count,
+        mangaDurationMin:  race.manga_duration_minutes,
+        startedAt:         race.started_at,
+        hasPole:           !!race.has_pole,
+        // Dotación de neumáticos por equipo (pares suministrados para toda la
+        // carrera; 0 = sin control). La app la usa para la estrategia de goma.
+        tirePairsPerTeam:  race.tire_pairs_per_team || 0,
+      },
+      activeManga: activeManga ? {
+        id:         activeManga.id,
+        number:     activeManga.number,
+        tandaNum:   activeManga.tanda_number,
+        startedAt:  activeManga.started_at,
+      } : null,
+      participants: out,
+    };
+  },
+
+  // GET /api/mobile/races/current
+  //
+  // Returns the race in progress (status='active') or, if none, the earliest
+  // pending race. Includes every registered team or driver with their full
+  // per-manga lane plan. Devuelve `{ race: null }` si no hay carrera activa
+  // ni pendiente.
+  racesCurrent(req, res) {
+    const race = db.prepare(`
+      SELECT * FROM races
+      WHERE status IN ('active','pending')
+      ORDER BY CASE status WHEN 'active' THEN 0 ELSE 1 END, created_at ASC
+      LIMIT 1
+    `).get();
+    if (!race) return res.json({ race: null });
+    return res.json(MobileController._buildRaceDetail(race));
+  },
+
+  // GET /api/mobile/races/active
+  //
+  // Lista todas las carreras activas y pendientes. La app móvil la usa para
+  // mostrar selector cuando hay más de una preparada.
+  racesActive(req, res) {
+    const rows = db.prepare(`
+      SELECT id, name, format, type, status, lanes_count, manga_duration_minutes,
+             has_pole, created_at, started_at
+      FROM races
+      WHERE status IN ('active','pending')
+      ORDER BY CASE status WHEN 'active' THEN 0 ELSE 1 END, created_at ASC
+    `).all();
+
+    const enriched = rows.map(r => {
+      const tandasCount = db.prepare('SELECT COUNT(*) AS c FROM tandas WHERE race_id = ?').get(r.id).c;
+      const partCount = r.format === 'team'
+        ? db.prepare('SELECT COUNT(*) AS c FROM teams WHERE race_id = ?').get(r.id).c
+        : db.prepare('SELECT COUNT(*) AS c FROM drivers WHERE race_id = ?').get(r.id).c;
+      return {
+        id:                r.id,
+        name:              r.name,
+        format:            r.format,
+        type:              r.type,
+        status:            r.status,
+        lanesCount:        r.lanes_count,
+        mangaDurationMin:  r.manga_duration_minutes,
+        hasPole:           !!r.has_pole,
+        createdAt:         r.created_at,
+        startedAt:         r.started_at,
+        tandasCount,
+        participantsCount: partCount,
+      };
+    });
+    return res.json({ races: enriched });
+  },
+
+  // GET /api/mobile/races/:id
+  //
+  // Detalle completo de una carrera concreta (mismo shape que /races/current
+  // pero para la carrera indicada). 404 si no existe.
+  racesShow(req, res) {
+    const race = Race.findById(req.params.id);
+    if (!race) return res.status(404).json({ error: 'race_not_found' });
+    return res.json(MobileController._buildRaceDetail(race));
+  },
+
+  // GET /api/mobile/races/:id/pole
+  //
+  // Estado completo de la pole de una carrera. Útil para la app móvil cuando
+  // la race tiene has_pole=1: la app muestra orden de salida, clasificación
+  // por mejor tiempo y, si hay alguien en pista, el cronómetro en vivo.
+  racesPole(req, res) {
+    const race = Race.findById(req.params.id);
+    if (!race) return res.status(404).json({ error: 'race_not_found' });
+
+    const defaultDurationMs = (race.manga_duration_minutes || 5) * 60_000;
+    const sess = PoleSession.findByRace(race.id);
+
+    if (!sess) {
+      return res.json({
+        active:        false,
+        status:        null,
+        poleLane:      null,
+        durationMs:    defaultDurationMs,
+        currentIdx:    0,
+        totalCount:    0,
+        currentEntry:  null,
+        nextEntry:     null,
+        startingOrder: [],
+        standings:     [],
+        live:          null,
+      });
+    }
+
+    const ordered = PoleSession.getEntriesOrdered(sess.id);
+    const sorted  = PoleSession.getEntriesSorted(sess.id);
+
+    const startingOrder = ordered.map((e, i) => ({
+      entryId:   e.id,
+      pos:       (e.order_idx ?? i) + 1,
+      name:      e.entity_name,
+      lapTimeMs: e.lap_time_ms ?? null,
+      done:      e.lap_time_ms != null,
+    }));
+
+    const standings = sorted
+      .filter(e => e.lap_time_ms != null)
+      .map((e, i) => ({
+        entryId:   e.id,
+        pos:       i + 1,
+        name:      e.entity_name,
+        lapTimeMs: e.lap_time_ms,
+      }));
+
+    // currentEntry/live: PoleTimingService manda si su sesión coincide con
+    // la de esta race (alguien en standby o cronómetro corriendo). Si no,
+    // caemos al current_idx persistido en BD.
+    const ts = PoleTimingService;
+    const matches = ts.session && ts.session.poleSessionId === sess.id;
+
+    let currentEntry = null;
+    let liveSnapshot = null;
+    let durationMs   = defaultDurationMs;
+
+    if (matches && (ts.isRunning || ts.isStandby)) {
+      const e = ordered.find(o => o.id === ts.session.entryId);
+      currentEntry = {
+        entryId:  ts.session.entryId,
+        name:     ts.session.entryName,
+        startPos: (e?.order_idx ?? 0) + 1,
+      };
+      liveSnapshot = ts.getLiveSnapshot();   // null si está en standby
+      if (ts.session.durationMs) durationMs = ts.session.durationMs;
+    } else if (sess.status === 'in_progress' && ordered[sess.current_idx]) {
+      const c = ordered[sess.current_idx];
+      currentEntry = {
+        entryId:  c.id,
+        name:     c.entity_name,
+        startPos: (c.order_idx ?? sess.current_idx) + 1,
+      };
+    }
+
+    // nextEntry: el siguiente en starting order tras el current. Si la
+    // pole ya está done, no hay siguiente.
+    let nextEntry = null;
+    if (sess.status !== 'done') {
+      const curIdx = currentEntry
+        ? ordered.findIndex(e => e.id === currentEntry.entryId)
+        : sess.current_idx - 1;
+      const next = ordered[curIdx + 1];
+      if (next) nextEntry = { entryId: next.id, name: next.entity_name };
+    }
+
+    return res.json({
+      active:        sess.status !== 'done',
+      status:        sess.status,
+      poleLane:      sess.lane ?? null,
+      durationMs,
+      currentIdx:    sess.current_idx,
+      totalCount:    ordered.length,
+      currentEntry,
+      nextEntry,
+      startingOrder,
+      standings,
+      live:          liveSnapshot,
+    });
+  },
+
+  // GET /api/mobile/races/:id/tires
+  //
+  // Control de neumáticos de la carrera para la app: dotación por equipo y el
+  // historial de cambios de CADA equipo (canónico), con nº de juego, manga y
+  // minuto:segundo de carrera. La app casa su piloto/rivales por NOMBRE (único
+  // por carrera) para poblar la estrategia de goma sin bookkeeping manual.
+  //
+  // `allowance = 0` → la carrera no lleva control de neumáticos. La app se
+  // queda entonces con su configuración manual.
+  //
+  // Se refresca en el cliente al recibir el socket `tires:changed` (re-fetch).
+  racesTires(req, res) {
+    const race = Race.findById(req.params.id);
+    if (!race) return res.status(404).json({ error: 'race_not_found' });
+
+    const summary = TireChange.summaryByRace(race.id);
+    const teams = summary.teams.map(t => {
+      // historyByTeam viene de más reciente a más antiguo; lo invertimos a orden
+      // cronológico para numerar el juego (1, 2, 3…) igual que el historial global.
+      const rows = TireChange.historyByTeam(race.id, t.id).slice().reverse();
+      const changes = rows.map((r, i) => ({
+        setNumber:     i + 1,
+        mangaId:       r.manga_id ?? null,
+        mangaNumber:   r.manga_number ?? null,
+        raceElapsedMs: r.race_elapsed_ms ?? null,
+        createdAtMs:   r.created_at_ms,
+        note:          r.note ?? null,
+      }));
+      return {
+        id:        t.id,
+        name:      t.name,
+        color:     t.color || '#8b949e',
+        used:      t.used,
+        available: t.available,
+        changes,
+      };
+    });
+
+    return res.json({ raceId: race.id, allowance: summary.allowance, teams });
+  },
+
+  // GET  /api/mobile/races/:id/tracking?team=<teamId>
+  // POST /api/mobile/races/:id/tracking  { team, names, pin }
+  // Seguimiento de rivales del Lap web, para la app. Leer es libre como el
+  // resto de la API móvil; cambiar la lista pide el PIN del equipo (el de la
+  // hoja de PINs) si la carrera lo exige, porque aquí no hay sesión de Lap.
+  racesTracking(req, res) {
+    const LapController = require('./LapController');
+    const race = Race.findById(req.params.id);
+    if (!race || race.format !== 'team') return res.status(404).json({ error: 'race_not_found' });
+    const teamId = Number(req.method === 'POST' ? (req.body && req.body.team) : req.query.team);
+    const team = Team.findById(teamId);
+    if (!team || team.race_id !== race.id) return res.status(404).json({ error: 'team_not_found' });
+
+    if (req.method === 'POST') {
+      if (race.lap_pin_required !== 0) {
+        Team.ensureLapPins(race.id);
+        const canon = db.prepare('SELECT MIN(id) AS id FROM teams WHERE race_id = ? AND name = ?').get(race.id, team.name);
+        if (!Team.verifyLapPin(race.id, canon.id, (req.body && req.body.pin) || '')) {
+          return res.status(403).json({ error: 'pin' });
+        }
+      }
+      LapTracking.setFor(race.id, team.name, (req.body && req.body.names) || []);
+      try { require('../services/SocketService').emit('lap:tracking', { raceId: race.id, teamName: team.name }); } catch (_) {}
+    }
+    return res.json({ ...LapController._buildTracking(race, team), pinRequired: race.lap_pin_required !== 0 });
+  },
+
+  // GET /api/mobile/training
+  //
+  // Estado del modo entrenamiento. La app móvil lo consulta cuando se
+  // conecta para ofrecer entrenamiento si no hay carrera activa (o como
+  // alternativa).
+  training(req, res) {
+    // Sirve tanto el entreno libre como el de competición (heats con rotación
+    // de carriles): los dos emiten los mismos `training:*` por socket.
+    const entreno = entrenoEnCurso();
+    const active = !!entreno;
+    const lanes = active ? entreno.getLanes() : [];
+    const competition = entreno === CompetitionTrainingService;
+    return res.json({
+      active,
+      competition,
+      heat:       competition ? entreno.heatNumber : null,
+      // Solo en competición: todos los participantes (también los que descansan).
+      participants: competition ? entreno.getRoster() : [],
+      startedAt:  (entreno || TrainingService).startedAt,
+      durationMs: (entreno || TrainingService).durationMs,
+      lanes: lanes.map(l => ({
+        lane:   l.lane,
+        participantName: l.participantName ?? null,
+        color:  l.color,
+        count:  l.count,
+        avgMs:  l.avgMs,
+        bestMs: l.bestMs,
+        lastMs: l.lastMs,
+      })),
+    });
+  },
+
+  // GET /api/mobile/competition-trainings
+  //
+  // Entrenos de competición ya guardados, el más reciente primero, para que la
+  // app los descargue y los consulte sin conexión. La sesión que está montada
+  // ahora mismo no sale hasta que se cierre: aún le faltan heats.
+  competitionTrainings(req, res) {
+    const enCurso = CompetitionTrainingService.isReady ? CompetitionTrainingService.sessionId : null;
+    const sessions = CompetitionTrainingResult.listSessions()
+      .filter(s => s.session_id !== enCurso)
+      .map(s => ({
+        id:           s.session_id,
+        startedAt:    isoUtc(s.started_at),
+        heats:        s.heats,
+        participants: s.participants,
+        laps:         s.laps || 0,
+        bestLapMs:    s.best_lap_ms ?? null,
+      }));
+    return res.json({ sessions });
+  },
+
+  // GET /api/mobile/competition-trainings/:id
+  //
+  // Una sesión completa: clasificación (más vueltas; a igualdad, mejor vuelta)
+  // y, heat a heat, lo que hizo cada carril.
+  competitionTrainingShow(req, res) {
+    const id = req.params.id;
+    const rows = CompetitionTrainingResult.getHeats(id);
+    if (rows.length === 0) return res.status(404).json({ error: 'session_not_found' });
+
+    const porHeat = new Map();
+    for (const r of rows) {
+      if (!porHeat.has(r.heat_number)) porHeat.set(r.heat_number, []);
+      porHeat.get(r.heat_number).push({
+        lane:        r.lane,
+        name:        r.participant_name,
+        bestLapMs:   r.best_lap_ms ?? null,
+        avgLapMs:    r.avg_lap_ms ?? null,
+        laps:        r.lap_count || 0,
+      });
+    }
+
+    return res.json({
+      id,
+      startedAt: isoUtc(rows[0].created_at),
+      standings: CompetitionTrainingResult.getStandings(id).map((s, i) => ({
+        pos:       i + 1,
+        name:      s.participant_name,
+        heats:     s.heats,
+        laps:      s.laps || 0,
+        bestLapMs: s.best_lap_ms ?? null,
+        avgLapMs:  s.avg_lap_ms ?? null,
+      })),
+      heats: [...porHeat].map(([heat, lanes]) => ({ heat, lanes })),
+    });
+  },
+
+  // GET /api/mobile/races
+  //
+  // Past races for the history view. Finished only — pending/active surface via
+  // /races/current instead.
+  racesList(req, res) {
+    const rows = db.prepare(`
+      SELECT id, name, format, type, lanes_count,
+             created_at, started_at, finished_at
+      FROM races
+      WHERE status IN ('finished','completed')
+      ORDER BY COALESCE(finished_at, created_at) DESC
+      LIMIT 100
+    `).all();
+
+    return res.json({
+      races: rows.map(r => ({
+        id:          r.id,
+        name:        r.name,
+        format:      r.format,
+        type:        r.type,
+        lanesCount:  r.lanes_count,
+        createdAt:   r.created_at,
+        startedAt:   r.started_at,
+        finishedAt:  r.finished_at,
+      })),
+    });
+  },
+
+  // GET /api/mobile/races/:id/results
+  //
+  // Aggregated final standings for a past race.
+  racesResults(req, res) {
+    const snapshot = MobileController.buildStatsSnapshot(req.params.id);
+    if (!snapshot) return res.status(404).json({ error: 'race_not_found' });
+    return res.json({
+      race: {
+        id:          snapshot.raceId,
+        name:        snapshot.name,
+        format:      snapshot.format,
+        type:        snapshot.type,
+        startedAt:   snapshot.startedAt,
+        finishedAt:  snapshot.finishedAt,
+      },
+      standings: snapshot.standings,
+    });
+  },
+
+  // Build the full stats snapshot for a finished race. Used both by the
+  // GET /results endpoint and by RaceController.complete to push the dossier
+  // over socket when a race ends, so mobile clients can persist a local
+  // history copy that works offline.
+  buildStatsSnapshot(raceId) {
+    const race = Race.findById(raceId);
+    if (!race) return null;
+
+    // Cacheado por carrera: cuesta 69 ms sobre las 160.000 vueltas de una 24 h, y
+    // al acabar la carrera los móviles piden los resultados todos a la vez (con
+    // 100, siete segundos de cola). El resultado es el mismo para todos.
+    //
+    // Mismo criterio que en live-stats: con una manga en curso manda el reloj;
+    // con la carrera acabada no entra ni una vuelta, así que solo la cambia una
+    // corrección — y de eso avisa el contador de mutaciones.
+    const viva   = TimingService.activeMangaOf(race.id) != null;
+    const cached = _snapshotCache.get(race.id);
+    if (cached && (viva
+          ? (Date.now() - cached.ts) < SNAPSHOT_TTL_MS
+          : cached.mut === Lap.mutationCount)) {
+      return cached.value;
+    }
+
+    // Se descartan las entidades nulas: son las vueltas de carriles sin equipo
+    // asignado, que el agregado junta en una fila sintética. Sin filtrar competía
+    // como uno más y podía salir "líder", falseando el gap de todos. El resto de
+    // vistas ya la quitan.
+    const aggregate = TimingService.raceAggregate(race.id).filter(r => r.entity_id != null);
+    const standings = aggregate.map((row, i) => ({
+      position:     i + 1,
+      entityId:     row.entity_id,
+      entityType:   row.entity_type,
+      name:         row.entity_name,
+      color:        row.color || '#8b949e',
+      totalLaps:    row.total_laps,
+      bestLapMs:    row.best_lap_ms,
+      avgLapMs:     row.avg_lap_ms != null ? Math.round(row.avg_lap_ms) : null,
+      totalTimeMs:  row.total_time_ms,
+      mangasRaced:  row.mangas_raced,
+      exitCount:    row.exit_count,
+    }));
+    const leaderLaps = standings[0]?.totalLaps ?? 0;
+    standings.forEach(s => { s.gapLaps = leaderLaps - s.totalLaps; });
+
+    const value = {
+      raceId:      race.id,
+      name:        race.name,
+      format:      race.format,
+      type:        race.type,
+      startedAt:   race.started_at,
+      finishedAt:  race.finished_at,
+      standings,
+      // Ruta relativa al export Excel comparativa. La app móvil la
+      // combina con la baseUrl del servidor al que está conectada para
+      // formar la URL completa de descarga.
+      excelPath:   `/races/${race.id}/results/xlsx`,
+    };
+
+    _snapshotCache.set(race.id, { ts: Date.now(), mut: Lap.mutationCount, value });
+    while (_snapshotCache.size > SNAPSHOT_MAX_RACES) {
+      _snapshotCache.delete(_snapshotCache.keys().next().value);
+    }
+    return value;
+  },
+
+  /** Tira la caché del dossier. Para los tests; en producción caduca sola. */
+  _resetCache() { _snapshotCache.clear(); },
+};
+
+module.exports = MobileController;

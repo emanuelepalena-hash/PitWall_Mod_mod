@@ -1,0 +1,648 @@
+<!DOCTYPE html>
+<html lang="<%= lang %>">
+<head>
+  <meta charset="UTF-8">
+<%- include('../partials/i18n-client') %>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>
+    <%= t('live-panel.clasificacion_general') %> — <%= race.name %>
+  </title>
+  <link rel="icon" type="image/svg+xml" href="/img/favicon.svg">
+  <link rel="icon" type="image/png" sizes="32x32"  href="/img/favicon-32.png">
+  <link rel="icon" type="image/png" sizes="256x256" href="/img/favicon-256.png">
+  <link rel="apple-touch-icon" sizes="180x180" href="/img/apple-touch-icon.png">
+  <link rel="stylesheet" href="/css/fonts.css">
+  <link rel="stylesheet" href="/css/live.css">
+  <style>
+    .panel-body {
+      display: flex; flex-direction: column; height: 100vh; overflow: hidden;
+      background:#000000; font-family: 'Inter', system-ui, sans-serif; color: #e6edf3;
+      /* Toda la vista escala con --pt-font (lo fija fitTable). Usamos em en los
+         tamaños para que cabecera, círculos de posición y celdas se ajusten
+         juntos al achicar la ventana. */
+      font-size: var(--pt-font, .92rem);
+    }
+    .panel-header {
+      display: flex; align-items: center; justify-content: space-between;
+      padding: .6em 1.3em;
+      background:#000000; border-bottom: 2px solid #161b22;
+      flex-shrink: 0;
+    }
+    .panel-header__left { display: flex; align-items: center; gap: .8em; }
+    .panel-title {
+      font-size: .72em; font-weight: 700; letter-spacing: .15em;
+      color: #6e7681; text-transform: uppercase;
+    }
+    .panel-manga {
+      font-family: 'Rajdhani', sans-serif; font-size: 1.15em; font-weight: 700;
+      color: #e6edf3; letter-spacing: .04em;
+    }
+    .panel-race { font-size: .8em; color: #6e7681; }
+    .panel-timer {
+      font-family: 'Share Tech Mono', monospace; font-size: 1.25em; font-weight: 700;
+      color: #f6c90e; letter-spacing: .03em; margin-left: .2em;
+    }
+    .panel-status { display: flex; align-items: center; gap: .4em; }
+    .panel-status .status-text { font-size: .9em; }   /* escala con la vista (override del .88rem de live.css) */
+
+    /* min-width:0 = clave: deja que el wrap (flex item) encoja al ancho real de
+       la ventana en vez de expandirse al ancho de la tabla; si no, fitTable mide
+       mal el espacio disponible y no encoge la fuente (P/Subir se salía). */
+    .panel-table-wrap { flex: 1; overflow: auto; min-width: 0; }
+    .panel-table {
+      width: 100%; border-collapse: collapse;
+      font-size: var(--pt-font, .92rem); table-layout: auto;
+    }
+    .panel-table th, .panel-table td { white-space: nowrap; }
+    .panel-table thead { position: sticky; top: 0; z-index: 5; }
+    .panel-table thead th {
+      padding: .55em .9em; font-size: .74em; font-weight: 700;
+      letter-spacing: .09em; color: #4e555e; text-transform: uppercase;
+      background:#000000; border-bottom: 1px solid #161b22; text-align: left;
+    }
+    .panel-table td {
+      padding: var(--pt-pad, .55rem) .9em;
+      border-bottom: 1px solid #0f1419; vertical-align: middle;
+    }
+    .pt-right { text-align: right !important; }
+    .pt-row:nth-child(odd) { background: rgba(255,255,255,.015); }
+    .pt-row--idle .pt-name,
+    .pt-row--idle .pt-ontrack,
+    .pt-row--idle .pt-avg,
+    .pt-row--idle .pt-proj { opacity: .55; }
+    /* Carril en pausa (pausa por circuito, multi-DS) */
+    .pt-row--paused { opacity: .45; }
+    .pt-pause-badge { margin-left: .5rem; color: #ef4444; font-weight: 800; }
+    .pt-arrows { text-align: center; line-height: 1.05; }
+    .pt-arrow-up, .pt-arrow-down { display: block; font-weight: 700; color: #30363d; }
+    .pt-arrow-up.good,   .pt-arrow-down.good { color: #3fb950; }
+    .pt-arrow-up.bad,    .pt-arrow-down.bad  { color: #e63946; }
+
+    .pt-pos {
+      display: inline-flex; align-items: center; justify-content: center;
+      width: 2em; height: 2em; border-radius: 50%;
+      font-family: 'Rajdhani', sans-serif; font-size: .95em; font-weight: 700;
+    }
+    .pt-pos.p1 { background: #f6c90e; color: #0d1117; }
+    .pt-pos.p2 { background: #b0b8c0; color: #0d1117; }
+    .pt-pos.p3 { background: #a0674a; color: #fff; }
+    .pt-pos.pn { background: #21262d; color: #8b949e; }
+
+    .pt-name-cell { max-width: 32%; overflow: hidden; }
+    .pt-name {
+      display: inline-block;
+      white-space: nowrap;
+      color: #e6edf3;
+      font-weight: 500;
+      max-width: 100%;
+    }
+    /* Verde = corriendo en la manga actual (estilo Tic Tac) */
+    .pt-name--ontrack { color: #3fb950; font-weight: 700; }
+    .pt-name--marquee {
+      animation: pt-name-scroll 8s linear infinite;
+      transform-origin: left center;
+    }
+    @keyframes pt-name-scroll {
+      0%,  15%  { transform: translateX(0); }
+      85%, 100% { transform: translateX(var(--pt-name-shift, -50%)); }
+    }
+    .pt-proj    { font-family: 'Share Tech Mono', monospace; color: #f6c90e; font-weight: 700; font-size: 1.05em; }
+    .pt-ontrack { font-family: 'Share Tech Mono', monospace; color: #e6edf3; font-weight: 700; }
+    .pt-avg     { font-family: 'Share Tech Mono', monospace; color: #58a6ff; }
+    .pt-tocatch { font-family: 'Share Tech Mono', monospace; color: #3fb950; }
+    .pt-gap     { font-family: 'Share Tech Mono', monospace; color: #8b949e; }
+
+    /* Transición al reordenar (ReorderFX) + destello direccional cuando una
+       fila cambia de puesto respecto al render anterior. */
+    .pt-row { transition: transform .45s cubic-bezier(.22,.8,.2,1); }
+    .pt-row.rfx-up   { animation: pt-row-glow-up .9s ease-out; }
+    .pt-row.rfx-down { animation: pt-row-glow-down .9s ease-out; }
+    @keyframes pt-row-glow-up   { 0% { background: rgba(63,185,80,.28); } 100% { background: transparent; } }
+    @keyframes pt-row-glow-down { 0% { background: rgba(230,57,70,.28); } 100% { background: transparent; } }
+    @media (prefers-reduced-motion: reduce) {
+      .pt-row { transition: none; }
+      .pt-row.rfx-up, .pt-row.rfx-down { animation: none; }
+    }
+  </style>
+</head>
+<body class="panel-body">
+
+  <header class="panel-header">
+    <div class="panel-header__left">
+      <span class="panel-title"><%= t('live-panel.clasificacion_general') %></span>
+      <span class="panel-manga">
+        <% if (tanda) { %><%= t('common.tanda_2') %> <%= tanda.number %><% if (typeof totalTandas !== 'undefined' && totalTandas) { %>/<%= totalTandas %><% } %> · <% } %>
+        <%= t('common.manga') %> <%= manga.number %><% if (typeof totalMangasInTanda !== 'undefined' && totalMangasInTanda) { %>/<%= totalMangasInTanda %><% } %>
+      </span>
+      <span class="panel-timer" id="panelTimer">--:--</span>
+    </div>
+    <div class="panel-header__left">
+      <div id="panelStatus" class="panel-status">
+        <% if (typeof isPaused !== 'undefined' && isPaused) { %>
+          <span class="status-dot status-dot--paused"></span>
+          <span class="status-text status-text--paused"><%= t('client.common.pausada') %></span>
+        <% } else if (isActive) { %>
+          <span class="status-dot status-dot--active"></span>
+          <span class="status-text status-text--active"><%= t('client.common.en_carrera') %></span>
+        <% } else if (manga.status === 'finished') { %>
+          <span class="status-text status-text--finished"><%= t('client.common.finalizada_2') %></span>
+        <% } else { %>
+          <span class="status-text status-text--pending"><%= t('client.common.en_espera') %></span>
+        <% } %>
+      </div>
+      <span class="panel-race"><%= race.name %></span>
+    </div>
+  </header>
+
+  <div class="panel-table-wrap">
+    <table class="panel-table">
+      <thead>
+        <tr>
+          <th>#</th>
+          <th title="<%= t('live-panel.tendencia') %>">↕</th>
+          <th><%= t('common.participante') %></th>
+          <th class="pt-right" title="<%= t('live-panel.vueltas_proyectadas_totales_al_final_de_la') %>"><%= t('common.v_proy') %></th>
+          <th class="pt-right"><%= t('client.common.total') %></th>
+          <th class="pt-right" title="<%= t('common.vueltas_proyectadas_respecto_al_de_delante') %>"><%= t('client.common.gap_v') %></th>
+          <th class="pt-right"><%= t('client.common.media') %></th>
+          <th class="pt-right" title="<%= t('live-panel.media_que_necesitas_en_lo_que_queda_de_carrera') %>"><%= t('live-panel.p_subir') %></th>
+        </tr>
+      </thead>
+      <tbody id="panelBody"></tbody>
+    </table>
+  </div>
+
+  <%
+    const LC2 = laneColorsFor(race);
+    const laneInit2 = {};
+    lanes.forEach(l => {
+      laneInit2[l.lane] = {
+        lane: l.lane, entityId: l.team_id || l.driver_id || null,
+        name: l.team_name || l.driver_name || ('Lane ' + l.lane),
+        color: LC2[l.lane - 1] || '#8b949e', isRest: l.is_rest ? true : false,
+        lapCount: 0, bestLapMs: null, lastLapMs: null, exitCount: 0,
+        _sum: 0, _n: 0, avgLapMs: null,
+      };
+    });
+    const PANEL_MIN_LAP_MS = (typeof race !== 'undefined' && race.min_lap_ms) ? race.min_lap_ms : 0;
+    laps.forEach(l => {
+      const s = laneInit2[l.lane];
+      if (!s || s.isRest) return;
+      s.lapCount = Math.max(s.lapCount, l.lap_number);
+      // Media/última = ritmo real: excluye warmup (out-lap) y vueltas sub-mínimo
+      // (cruces fantasma); incluye salidas. Igual que live.ejs.
+      const aboveMin = (PANEL_MIN_LAP_MS <= 0 || l.lap_time_ms >= PANEL_MIN_LAP_MS);
+      if (!l.is_warmup && aboveMin) { s.lastLapMs = l.lap_time_ms; s._sum += l.lap_time_ms; s._n++; }
+      // Mejor vuelta: ni salida, ni warmup, ni 1ª vuelta, ni sub-mínimo.
+      if (!l.is_exit && !l.is_warmup && l.lap_number > 1 && aboveMin
+          && (!s.bestLapMs || l.lap_time_ms < s.bestLapMs)) s.bestLapMs = l.lap_time_ms;
+      if (l.is_exit) s.exitCount++;
+    });
+    Object.values(laneInit2).forEach(s => {
+      s.avgLapMs = s._n > 0 ? Math.round(s._sum / s._n) : null;
+    });
+  %>
+
+  <script>
+    const PANEL_DATA = <%- JSON.stringify({
+      raceId:           race.id,
+      mangaId:          manga.id,
+      mangaStatus:      manga.status,
+      isActive:         isActive,
+      isPaused:         typeof isPaused !== 'undefined' && isPaused,
+      lanesCount:       race.lanes_count,
+      mangaDurationMs:  (typeof effectiveMangaDurationMs !== 'undefined' && effectiveMangaDurationMs > 0)
+                          ? effectiveMangaDurationMs
+                          : (race.manga_duration_minutes * 60 * 1000),
+      totalRaceMs:      race.lanes_count * ((typeof effectiveMangaDurationMs !== 'undefined' && effectiveMangaDurationMs > 0)
+                                            ? effectiveMangaDurationMs
+                                            : (race.manga_duration_minutes * 60 * 1000)),
+      standings:        standings,
+      lanes:            Object.values(laneInit2),
+      allParticipants:  allParticipants || [],
+      prevLapsByLane:   prevLapsByLane || {},
+      projection:       (typeof projection !== 'undefined' ? projection : []),
+    }) %>;
+    const LANG = "<%= lang %>";
+  </script>
+  <script src="/socket.io/socket.io.js"></script>
+  <script src="/js/reorder-fx.js"></script>
+  <script>
+    function formatMs(ms) {
+      if (ms == null) return '—';
+      ms = Math.round(ms);             // sin esto, ms%1000 sobre un float (p.ej. P/Subir) arrastra basura de coma flotante; 3 decimales = ms enteros
+      const totalSec = Math.floor(ms / 1000);
+      const millis   = ms % 1000;
+      const secs = totalSec % 60;
+      const mins = Math.floor(totalSec / 60);
+      return `${mins > 0 ? mins + ':' : ''}${String(secs).padStart(mins > 0 ? 2 : 1, '0')}.${String(millis).padStart(3, '0')}`;
+    }
+
+    // Vueltas con 1 decimal y coma decimal (estilo Tic Tac): 298.6 → "298,6"
+    function fmtLaps1(n) { return (n == null) ? '—' : n.toFixed(1).replace('.', ','); }
+
+    function posClass(pos) { return ['p1','p2','p3'][pos-1] || 'pn'; }
+
+    // Color determinista por categoría (mismo string → mismo color, sin
+    // coordinación entre ventanas): así el directo, Le Mans y el resto de
+    // paneles pintan la categoría del mismo color aunque sean páginas distintas.
+    // Paleta FIJA (no hue continuo): dos categorías de la MISMA carrera (p.ej.
+    // "C1"/"C2") necesitan verse claramente distintas, y un hash sobre un
+    // círculo de tonos continuo puede acercarlas por casualidad (visto con
+    // C1/C2). Con una paleta corta y curada, cualquier carrera con un puñado
+    // de categorías (lo habitual) sale con colores nítidamente diferentes.
+    const CAT_PALETTE = ['#58a6ff','#f6c90e','#3fb950','#ff6b9d','#ff9800','#ba68c8','#00bcd4','#e63946','#8bc34a','#ce93d8','#4dd0e1','#ffab40'];
+    function catColor(cat) {
+      if (!cat) return null;
+      let h = 0;
+      for (let i = 0; i < cat.length; i++) h = (h * 31 + cat.charCodeAt(i)) >>> 0;
+      return CAT_PALETTE[h % CAT_PALETTE.length];
+    }
+    function teamHtml(name, cat) {
+      return cat ? `${name}<span class="cat-suffix" style="color:${catColor(cat)}"> - ${cat}</span>` : name;
+    }
+
+    const panelBody = document.getElementById('panelBody');
+
+    // Auto-ajuste de fuente y padding a la VENTANA: toma el mínimo entre el
+    // factor altura (filas vs alto disponible) y el factor ancho (8 columnas
+    // necesitan ~440px a 1rem). Se ejecuta en resize Y tras cada render, y
+    // también vía ResizeObserver sobre el contenedor por si la ventana del
+    // popup cambia sin disparar resize del window (raro pero posible).
+    // Auto-ajuste + paginación con carrusel:
+    //   1) Calcula un tamaño de fuente basado en altura, con un MÍNIMO
+    //      legible (~0.72 rem).
+    //   2) Mide el ancho real y reduce la fuente si las columnas no caben.
+    //   3) Si aún así no caben todas, activa un carrusel que rota la página
+    //      visible cada PAGE_INTERVAL_MS. Si caben (o agrandas la ventana),
+    //      se muestran todas y el carrusel se detiene.
+    const FONT_MIN_REM      = 0.72;
+    const FONT_MAX_REM      = 1.4;
+    const PAGE_INTERVAL_MS  = 10000;   // 10 s entre páginas (carrusel)
+    let _pageTimer = null;
+    let _currentPage = 0;
+    let _pageSize = 0;
+    let _totalPages = 1;
+    function fitTable() {
+      const wrap = document.querySelector('.panel-table-wrap');
+      const table = document.querySelector('.panel-table');
+      if (!wrap || !table) return;
+      const thead = wrap.querySelector('thead');
+      const allRows = panelBody ? Array.from(panelBody.querySelectorAll('tr')) : [];
+      if (!allRows.length) return;
+
+      // Reset display para medir con todas las filas visibles
+      allRows.forEach(r => { r.style.display = ''; });
+
+      const headerH    = thead ? thead.offsetHeight : 32;
+      const availableH = Math.max(60, wrap.clientHeight - headerH);
+      const availableW = Math.max(120, wrap.clientWidth - 4);
+
+      // 1) Tamaño inicial por altura con MIN floor (no achicar más allá de eso)
+      const rowHTarget = availableH / allRows.length;
+      let fontSize  = rowHTarget / 2.4;
+      fontSize      = Math.min(FONT_MAX_REM, Math.max(FONT_MIN_REM, fontSize));
+      let pad       = Math.max(0.05, fontSize * 0.40);
+      document.documentElement.style.setProperty('--pt-font', fontSize.toFixed(3) + 'rem');
+      document.documentElement.style.setProperty('--pt-pad',  pad.toFixed(3)      + 'rem');
+
+      // 2) Width-fit: si las columnas no caben, reduce proporcionalmente
+      for (let iter = 0; iter < 3; iter++) {
+        void table.offsetWidth;
+        const actualW = table.scrollWidth;
+        if (actualW <= availableW + 2) break;
+        const ratio = (availableW - 4) / actualW;
+        fontSize    = Math.max(0.38, fontSize * ratio);     // sin floor aquí, prioridad: caben
+        pad         = Math.max(0.04, fontSize * 0.40);
+        document.documentElement.style.setProperty('--pt-font', fontSize.toFixed(3) + 'rem');
+        document.documentElement.style.setProperty('--pt-pad',  pad.toFixed(3)      + 'rem');
+      }
+
+      // 3) Paginación con carrusel: con la fuente final, ¿caben todas las filas?
+      void table.offsetWidth;
+      const actualRowH = allRows[0].offsetHeight || (fontSize * 16 * 2.4);
+      const pageSize   = Math.max(1, Math.floor(availableH / actualRowH));
+
+      if (pageSize >= allRows.length) {
+        // Caben todas → mostrarlas y parar el carrusel.
+        _currentPage = 0; _pageSize = allRows.length; _totalPages = 1;
+        allRows.forEach(r => { r.style.display = ''; });
+        if (_pageTimer) { clearInterval(_pageTimer); _pageTimer = null; }
+        return;
+      }
+
+      // Hay overflow → paginar. Guardamos pageSize/totalPages en variables que
+      // lee el timer, para NO recrear el intervalo en cada render (si no, las
+      // actualizaciones de standings lo reiniciaban antes de tiempo y nunca
+      // rotaba). El timer se crea UNA sola vez y sobrevive a los re-render.
+      _pageSize   = pageSize;
+      _totalPages = Math.ceil(allRows.length / pageSize);
+      if (_currentPage >= _totalPages) _currentPage = 0;
+      showPage(allRows, _pageSize, _currentPage);
+      if (!_pageTimer) {
+        _pageTimer = setInterval(() => {
+          if (_totalPages <= 1) return;
+          // Re-consultar filas: render() reconstruye la tabla en cada standings.
+          const rows = panelBody ? Array.from(panelBody.querySelectorAll('tr')) : [];
+          if (!rows.length) return;
+          _currentPage = (_currentPage + 1) % _totalPages;
+          showPage(rows, _pageSize, _currentPage);
+          if (typeof refreshMarquees === 'function') refreshMarquees();
+        }, PAGE_INTERVAL_MS);
+      }
+    }
+
+    function showPage(rows, pageSize, pageIdx) {
+      const from = pageIdx * pageSize;
+      const to   = from + pageSize;
+      rows.forEach((r, i) => { r.style.display = (i >= from && i < to) ? '' : 'none'; });
+    }
+
+    window.addEventListener('resize', fitTable);
+    // ResizeObserver sobre el wrap: dispara fitTable si el contenedor cambia
+    // (p.ej. al cambiar el tamaño de la ventana del popup sin un resize de window)
+    if ('ResizeObserver' in window) {
+      const wrap = document.querySelector('.panel-table-wrap');
+      if (wrap) {
+        let rafId = 0;
+        const ro = new ResizeObserver(() => {
+          if (rafId) cancelAnimationFrame(rafId);
+          rafId = requestAnimationFrame(() => { rafId = 0; fitTable(); });
+        });
+        ro.observe(wrap);
+      }
+    }
+
+    // ── Proyección ÚNICA del servidor ─────────────────────────────────────────
+    // NO se recalcula en cliente: se consume TAL CUAL la proyección media-based
+    // que envía el servidor (TimingService.buildRaceProjection): la MISMA que
+    // Le Mans, live-stats y las tarjetas del directo. `data.projection` viene en
+    // cada 'standings'; si no lo trae (manga inactiva), usamos PANEL_DATA.projection.
+    function buildRows(data) {
+      const proj = (data && data.projection && data.projection.length)
+        ? data.projection
+        : (PANEL_DATA.projection || []);
+
+      // Carril actual por entidad (solo para resaltar quién rueda ahora).
+      const laneToEntity = {};
+      (PANEL_DATA.lanes || []).forEach(l => { if (l.entityId != null) laneToEntity[l.lane] = l.entityId; });
+      const liveLaneById = new Map();
+      if (data?.standings) {
+        data.standings.forEach(r => {
+          const id = laneToEntity[r.lane];
+          if (id != null) liveLaneById.set(id, r.lane);
+        });
+      }
+
+      // El servidor ya devuelve el ARRAY ORDENADO. Solo lo mapeamos a la forma
+      // que la tabla espera (sin tocar orden ni números).
+      const rows = proj.map(p => ({
+        _id:               p.entityId,
+        name:              p.name,
+        categoria:         p.categoria || null,
+        lane:              liveLaneById.has(p.entityId) ? liveLaneById.get(p.entityId) : null,
+        total:             p.total ?? p.totalLaps ?? 0,
+        avgLapMs:          p.avgLapMs ?? null,
+        bestLapMs:         p.bestLapMs ?? null,
+        onTrack:           !!p.onTrack || liveLaneById.has(p.entityId),
+        hasData:           (p.total ?? p.totalLaps ?? 0) > 0 || p.avgLapMs != null,
+        projectedTotalRaw: p.projectedRaw ?? p.projectedTotal ?? null,
+        projectedTotal:    p.projectedTotal != null ? Math.round(p.projectedTotal) : null,
+        _gapV:             p.gapV ?? null,
+        _gapVT:            p.gapVLeader ?? null,
+        _avgToCatch:       p.avgToCatch ?? null,
+      }));
+
+      const BIG = 1e9;
+      const scoreOf = r => (r.projectedTotalRaw ?? 0) * BIG - (r.avgLapMs ?? BIG);
+
+      // Tendencia (↕): se sigue midiendo contra el rival de delante / detrás.
+      rows.forEach((r, i) => {
+        const rRaw  = r.projectedTotalRaw;
+        const above = rows[i-1];
+        const below = rows[i+1];
+        r._gapAbove = (i === 0 || rRaw == null || (above && above.projectedTotalRaw == null))
+          ? null : scoreOf(above) - scoreOf(r);
+        r._gapBelow = (below && rRaw != null && below.projectedTotalRaw != null)
+          ? scoreOf(r) - scoreOf(below) : null;
+
+        const prev = prevPanelGap[r._id] || {};
+        r._trUp = 'neutral'; r._trDown = 'neutral';
+        if (r._gapAbove != null && prev.above != null) {
+          if (r._gapAbove < prev.above)      r._trUp = 'good';
+          else if (r._gapAbove > prev.above) r._trUp = 'bad';
+        }
+        if (r._gapBelow != null && prev.below != null) {
+          if (r._gapBelow < prev.below)      r._trDown = 'bad';
+          else if (r._gapBelow > prev.below) r._trDown = 'good';
+        }
+      });
+
+      prevPanelGap = {};
+      rows.forEach(r => { prevPanelGap[r._id] = { above: r._gapAbove, below: r._gapBelow }; });
+      return rows;
+    }
+    let prevPanelGap = {};
+
+    // Pausa por circuito: carriles pausados → atenúa sus filas. Se mantiene en
+    // un set porque render() reconstruye la tabla en cada standings.
+    let pausedLanes = new Set();
+    function applyPausedRows() {
+      panelBody.querySelectorAll('.pt-row').forEach(row => {
+        const lane = parseInt(row.dataset.lane, 10);
+        const paused = !isNaN(lane) && pausedLanes.has(lane);
+        row.classList.toggle('pt-row--paused', paused);
+        let b = row.querySelector('.pt-pause-badge');
+        if (paused && !b) {
+          b = document.createElement('span');
+          b.className = 'pt-pause-badge';
+          b.textContent = '⏸';
+          (row.querySelector('.pt-name-cell') || row).appendChild(b);
+        } else if (!paused && b) {
+          b.remove();
+        }
+      });
+    }
+
+    function render(data) {
+      const rows = buildRows(data);
+      // Filas persistentes (identificadas por _id de entidad) reordenadas con
+      // ReorderFX en vez de reconstruir la tabla entera: así una fila puede
+      // deslizarse a su puesto nuevo en lugar de aparecer ya reubicada.
+      const build = window.ReorderFX ? window.ReorderFX.reconcileAnimated : (c, items, keyFn, renderFn) => {
+        c.innerHTML = '';
+        items.forEach(item => c.appendChild(renderFn(item, null)));
+      };
+      build(panelBody, rows, r => r._id, (r, tr) => {
+        const i = rows.indexOf(r);
+        if (!tr) tr = document.createElement('tr');
+        tr.className = `pt-row${r.hasData ? '' : ' pt-row--idle'}`;
+        tr.dataset.lane = r.lane != null ? r.lane : '';
+
+        const upCls   = r._trUp === 'good' ? ' good' : r._trUp === 'bad' ? ' bad' : '';
+        const downCls = r._trDown === 'good' ? ' good' : r._trDown === 'bad' ? ' bad' : '';
+        const upCh    = i === 0 ? '' : '▲';
+        const downCh  = i === rows.length - 1 ? '' : '▼';
+        tr.innerHTML = `
+          <td><span class="pt-pos ${posClass(i+1)}">${i+1}</span></td>
+          <td class="pt-arrows">
+            <span class="pt-arrow-up${upCls}">${upCh}</span>
+            <span class="pt-arrow-down${downCls}">${downCh}</span>
+          </td>
+          <td class="pt-name-cell"><span class="pt-name${r.onTrack ? ' pt-name--ontrack' : ''}">${teamHtml(r.name, r.categoria)}</span></td>
+          <td class="pt-right"><span class="pt-proj">${r.projectedTotalRaw == null ? '—' : fmtLaps1(r.projectedTotalRaw) + 'v'}</span></td>
+          <td class="pt-right"><span class="pt-ontrack">${r.total}</span></td>
+          <td class="pt-right"><span class="pt-gap">${r._gapV  > 0 ? 'a ' + fmtLaps1(r._gapV) + 'v' : '—'}</span></td>
+          <td class="pt-right"><span class="pt-avg">${formatMs(r.avgLapMs)}</span></td>
+          <td class="pt-right"><span class="pt-tocatch">${r._avgToCatch != null ? formatMs(r._avgToCatch) : '—'}</span></td>`;
+        return tr;
+      });
+      applyPausedRows();
+      requestAnimationFrame(() => { fitTable(); refreshMarquees(); });
+    }
+
+    // Marquee automático para nombres que no caben en su celda. Detecta
+    // overflow midiendo scrollWidth vs clientWidth y aplica una animación
+    // CSS que desplaza el texto a la izquierda y vuelve. Se recalcula tras
+    // cada render y cuando cambia el tamaño de la ventana (la celda max-width
+    // es porcentual del wrap, así que cambia con el ancho del popup).
+    function refreshMarquees() {
+      document.querySelectorAll('.pt-name').forEach(el => {
+        const cell = el.closest('.pt-name-cell');
+        if (!cell) return;
+        el.classList.remove('pt-name--marquee');
+        el.style.removeProperty('--pt-name-shift');
+        // Forzar reflow tras quitar la animación para que las medidas sean reales
+        void el.offsetWidth;
+        const overflow = el.scrollWidth - cell.clientWidth;
+        if (overflow > 4) {
+          el.style.setProperty('--pt-name-shift', -(overflow + 8) + 'px');
+          el.classList.add('pt-name--marquee');
+        }
+      });
+    }
+    window.addEventListener('resize', () => requestAnimationFrame(refreshMarquees));
+
+    render(PANEL_DATA.standings);
+
+    // El panel de la estimada es un control de TODA la carrera, no de una manga
+    // concreta. El socket está SIEMPRE activo (aunque esta manga ya esté
+    // finalizada) para reapuntarse solo a la manga que arranque después —
+    // incluida la primera de una tanda nueva— sin tener que cerrarlo y reabrirlo.
+    const RACE_ID  = PANEL_DATA.raceId;
+    const MANGA_ID = PANEL_DATA.mangaId;
+
+    // ── Cronómetro de la manga en la cabecera ────────────────────────────────
+    // Activa: cuenta atrás desde remainingMs (se refresca con cada standings).
+    // Pendiente: muestra la duración total. Finalizada: 00:00.
+    const panelTimer = document.getElementById('panelTimer');
+    function fmtClock(ms) {
+      if (ms == null || ms < 0) ms = 0;
+      const s = Math.floor(ms / 1000);
+      return String(Math.floor(s / 60)).padStart(2, '0') + ':' + String(s % 60).padStart(2, '0');
+    }
+    let _remainMs = (PANEL_DATA.standings && PANEL_DATA.standings.remainingMs != null)
+      ? PANEL_DATA.standings.remainingMs
+      : (PANEL_DATA.mangaStatus === 'finished' ? 0 : (PANEL_DATA.mangaDurationMs || 0));
+    // _paused SOLO lo tocan manga:paused/manga:resumed (la pausa real del
+    // servidor). El handler de 'standings' NO debe pisarlo: antes ponía
+    // _timerRunning = true en cada 'standings' (que llega constantemente,
+    // incluido el que emite el propio pauseCircuit()), así que el freeze de
+    // manga:paused se deshacía un instante después y el reloj seguía bajando.
+    let _paused       = !!PANEL_DATA.isPaused;
+    let _timerRunning = !!PANEL_DATA.isActive && !_paused;
+    function renderTimer() { if (panelTimer) panelTimer.textContent = fmtClock(_remainMs); }
+    renderTimer();
+
+    // Estado de la cabecera (En espera / En carrera / Pausada / Finalizada). Se
+    // pinta al cargar según isActive/isPaused, pero hay que ACTUALIZARLO en
+    // vivo: si abriste el panel en "En espera" y luego dio GO, debe pasar a
+    // "En carrera" (y a "Pausada" si el director pausa la manga).
+    let _statusShown = _paused ? 'paused'
+                     : PANEL_DATA.isActive ? 'active'
+                     : (PANEL_DATA.mangaStatus === 'finished' ? 'finished' : 'pending');
+    function setPanelStatus(state) {
+      if (state === _statusShown) return;
+      _statusShown = state;
+      const s = document.getElementById('panelStatus');
+      if (!s) return;
+      if (state === 'active')
+        s.innerHTML = `<span class="status-dot status-dot--active"></span><span class="status-text status-text--active">${I18N.t('client.common.en_carrera')}</span>`;
+      else if (state === 'paused')
+        s.innerHTML = `<span class="status-dot status-dot--paused"></span><span class="status-text status-text--paused">${I18N.t('client.common.pausada')}</span>`;
+      else if (state === 'finished')
+        s.innerHTML = `<span class="status-text status-text--finished">${I18N.t('client.common.finalizada_2')}</span>`;
+      else
+        s.innerHTML = `<span class="status-text status-text--pending">${I18N.t('client.common.en_espera')}</span>`;
+    }
+    setInterval(() => {
+      if (_timerRunning && _remainMs > 0) { _remainMs = Math.max(0, _remainMs - 1000); renderTimer(); }
+    }, 1000);
+
+    // Reapunta el panel a otra manga de NUESTRA carrera (recarga sobre ella).
+    function repointTo(mangaId) {
+      if (mangaId && mangaId !== MANGA_ID) {
+        location.href = `/races/${RACE_ID}/mangas/${mangaId}/panel/standings`;
+      }
+    }
+
+    const socket = io();
+    socket.on('connect', () => socket.emit('standings:request'));
+
+    socket.on('standings', (data) => {
+      if (!data) return;
+      // Si hay una manga ACTIVA distinta en nuestra carrera (otra manga/tanda
+      // ya en marcha), saltamos a ella. Si es la nuestra, render normal.
+      if (data.raceId === RACE_ID && data.mangaId !== MANGA_ID) { repointTo(data.mangaId); return; }
+      if (data.mangaId === MANGA_ID) {
+        // 'standings' llega constantemente (incluido el que emite el propio
+        // pauseCircuit()) — NO debe reactivar el reloj ni el estado "En
+        // carrera" mientras _paused siga en pie; eso lo deciden solo
+        // manga:paused/manga:resumed más abajo.
+        if (typeof data.remainingMs === 'number') {
+          _remainMs = data.remainingMs;
+          if (!_paused) { _timerRunning = true; setPanelStatus('active'); }
+          renderTimer();
+        }
+        render(data);
+      }
+    });
+
+    // Arranque de una manga nueva (misma carrera, incluye nueva tanda) → saltar.
+    socket.on('manga:started', (data) => {
+      if (data && data.raceId === RACE_ID) repointTo(data.mangaId);
+    });
+
+    // Pausa por circuito: atenúa las filas de los carriles del circuito pausado.
+    socket.on('circuit:state', ({ status, lanes }) => {
+      (lanes || []).forEach(l => {
+        if (status === 'paused') pausedLanes.add(l); else pausedLanes.delete(l);
+      });
+      applyPausedRows();
+    });
+    socket.on('manga:stopped', (data) => {
+      if (data && data.mangaId != null && data.mangaId !== MANGA_ID) return;
+      _timerRunning = false; _remainMs = 0; renderTimer();
+      setPanelStatus('finished');
+      // Los 'standings' llevan la proyección cacheada (sin el último cruce) y
+      // tras el cierre ya no llega ninguno más; además el servidor repone a
+      // los 1,5 s las vueltas de bandera. Recargar trae el total real de BD.
+      setTimeout(() => location.reload(), 2500);
+    });
+    socket.on('manga:reconciled', (data) => {
+      if (data && data.raceId === RACE_ID) location.reload();
+    });
+    // Corrección de vueltas: con manga viva ya llega un 'standings' corregido.
+    socket.on('laps:corrected', (data) => {
+      if (data && data.raceId === RACE_ID && !data.running) location.reload();
+    });
+    // Con la manga en pausa el reloj real está congelado en el servidor;
+    // sin esto el contador local seguía bajando cada segundo aunque no se
+    // corriera ni una vuelta. _paused es lo único que gobierna esa decisión
+    // (ver el handler de 'standings' más arriba).
+    socket.on('manga:paused',  () => { _paused = true;  _timerRunning = false; setPanelStatus('paused'); });
+    socket.on('manga:resumed', () => { _paused = false; _timerRunning = true;  setPanelStatus('active'); try { socket.emit('standings:request'); } catch(e){} });
+    socket.on('manga:cancelled', (data) => { if (!data || data.raceId === RACE_ID) location.reload(); });
+  </script>
+</body>
+</html>

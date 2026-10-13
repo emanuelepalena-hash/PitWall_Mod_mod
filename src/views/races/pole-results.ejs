@@ -1,0 +1,172 @@
+<%
+function formatMs(ms) {
+  if (!ms) return '—';
+  const m = Math.floor(ms / 60000);
+  const s = ((ms % 60000) / 1000).toFixed(3).padStart(6, '0');
+  return m > 0 ? m + ':' + s : s + 's';
+}
+function fmtSeconds3(ms) {
+  if (!ms) return '—';
+  return (ms / 1000).toFixed(3);
+}
+// Ausentes (is_noshow) fuera del ranking por tiempo: su 0.00 sintético no
+// puede salir como "vuelta rápida" ni marcar la pole. Van en su propio bloque.
+const timedEntries = entries.filter(e => e.lap_time_ms != null && !e.is_noshow)
+                            .slice().sort((a, b) => a.lap_time_ms - b.lap_time_ms);
+const noShowEntries = entries.filter(e => e.is_noshow);
+const pendingEntries = entries.filter(e => e.lap_time_ms == null && !e.is_noshow);
+const bestMs = timedEntries.length > 0 ? timedEntries[0].lap_time_ms : null;
+const poleHolderName = timedEntries.length > 0 ? timedEntries[0].entity_name : null;
+%>
+<%- include('../partials/header', { pageTitle: t('pole-results.resultados_pole_position') }) %>
+
+<!-- Fuentes broadcast (mismas que la pole/timing) -->
+<link rel="stylesheet" href="/css/fonts.css">
+
+<div class="pole-broadcast">
+  <div class="pole-bcast-wrap">
+
+    <!-- ── Cabecera ──────────────────────────────────────────────────── -->
+    <a href="/races/<%= race.id %>" class="pole-back">← <%= t('race.back_to_list') %></a>
+
+    <div class="pole-title-row">
+      <div class="pole-flag" aria-hidden="true"></div>
+      <h1 class="pole-h1"><%= t('pole-results.resultados_pole') %></h1>
+    </div>
+
+    <div class="pole-meta">
+      <span class="pole-meta-club"><%= race.name %></span>
+      <span class="pole-dot"></span>
+      <span>1c–<%= race.lanes_count %>c</span>
+      <span class="pole-dot"></span>
+      <span class="pole-lane-badge">
+        <%= t('common.carril_de_pole') %>
+        <span class="pole-lane-num"><%= session.lane %></span>
+      </span>
+      <% if (poleHolderName) { %>
+        <span class="pole-dot"></span>
+        <span class="pole-meta-pole"><%= t('common.pole') %> <b><%= poleHolderName %></b></span>
+      <% } %>
+    </div>
+
+    <% if (!allTimed) { %>
+      <div class="pole-warn">
+        ⚠️ <%= t('pole-results.hay_participantes_sin_tiempo_registrado_puedes') %>
+      </div>
+    <% } %>
+
+    <!-- ── Clasificación final ──────────────────────────────────────── -->
+    <section class="pole-bcast-card pole-results-card" aria-label="<%= t('pole-results.clasificacion_final') %>">
+      <div class="pole-bcast-title">
+        <span class="pole-bcast-ico">🏆</span>
+        <%= t('pole-results.clasificacion_final') %>
+      </div>
+      <div class="pole-tower pole-tower--results">
+        <% timedEntries.forEach((entry, i) => {
+          const isP1  = i === 0;
+          const gapMs = isP1 ? null : entry.lap_time_ms - bestMs;
+          const cls   = 'pole-tower-row' + (isP1 ? ' pole-tower-row--p1' : '');
+        %>
+          <div class="<%= cls %>">
+            <div class="pole-tower-pos"><%= i + 1 %></div>
+            <div class="pole-tower-name">
+              <%= entry.entity_name %>
+              <% if (isP1) { %>
+                <span class="pole-tower-fastest"><%= t('client.common.vuelta_rapida') %></span>
+              <% } %>
+            </div>
+            <div class="pole-tower-time">
+              <%= fmtSeconds3(entry.lap_time_ms) %>
+              <% if (isP1) { %>
+                <span class="pole-tower-gap"><%= t('client.common.lider') %></span>
+              <% } else { %>
+                <span class="pole-tower-gap">+<%= (gapMs / 1000).toFixed(3) %></span>
+              <% } %>
+            </div>
+          </div>
+        <% }) %>
+
+        <% pendingEntries.forEach((entry) => { %>
+          <div class="pole-tower-row pole-tower-row--pending">
+            <div class="pole-tower-pos">—</div>
+            <div class="pole-tower-name"><%= entry.entity_name %></div>
+            <div class="pole-tower-time">—</div>
+          </div>
+        <% }) %>
+
+        <% noShowEntries.forEach((entry) => { %>
+          <div class="pole-tower-row pole-tower-row--pending">
+            <div class="pole-tower-pos">—</div>
+            <div class="pole-tower-name"><%= entry.entity_name %></div>
+            <div class="pole-tower-time"><%= t('client.common.ausente') %></div>
+          </div>
+        <% }) %>
+      </div>
+    </section>
+
+    <!-- ── Acciones ─────────────────────────────────────────────────── -->
+    <div class="pole-results-actions">
+      <button type="button" id="btnEditTimes" class="pole-btn-edit">
+        ✏️ <%= t('pole-results.editar_tiempos') %>
+      </button>
+      <% if (session.status !== 'done') { %>
+        <a href="/races/<%= race.id %>/pole/lanes" class="pole-btn-confirm">
+          🚦 <%= t('pole-results.asignar_carriles_de_salida') %> →
+        </a>
+      <% } else { %>
+        <span class="pole-done-tag">✓ <%= t('pole-results.pole_completada') %></span>
+        <a href="/races/<%= race.id %>" class="pole-btn-edit">
+          <%= t('common.volver_a_la_carrera') %>
+        </a>
+      <% } %>
+    </div>
+
+    <!-- ── Editor de tiempos (oculto) ───────────────────────────────── -->
+    <div id="timeEditor" class="pole-bcast-card pole-edit-card" style="display:none">
+      <div class="pole-bcast-title">
+        <span class="pole-bcast-ico">✏️</span>
+        <%= t('pole-results.editar_tiempos') %>
+        <span class="pole-edit-hint"><%= t('pole-results.formato_8_456_o_1_08_456') %></span>
+      </div>
+      <form action="/races/<%= race.id %>/pole/times" method="POST" class="pole-edit-form">
+        <% entries.forEach(entry => { %>
+          <div class="pole-edit-row">
+            <span class="pole-edit-name"><%= entry.entity_name %></span>
+            <input
+              class="pole-edit-input"
+              type="text"
+              name="times[e<%= entry.id %>]"
+              value="<%= entry.lap_time_ms ? (entry.lap_time_ms / 1000).toFixed(3) : '' %>"
+              placeholder="<%= t('pole-results.ej_8_456') %>">
+          </div>
+        <% }) %>
+        <div class="pole-edit-actions">
+          <button type="button" id="btnCancelEdit" class="pole-btn-edit">
+            <%= t('client.common.cancelar') %>
+          </button>
+          <button type="submit" class="pole-btn-confirm pole-btn-confirm--save">
+            💾 <%= t('pole-results.guardar_tiempos') %>
+          </button>
+        </div>
+      </form>
+    </div>
+
+    <div class="pole-bcast-foot">
+      <%= t('common.si_pole_clasificacion_a_vuelta_unica_el_mas') %>
+    </div>
+
+  </div>
+</div>
+
+<script>
+document.getElementById('btnEditTimes').addEventListener('click', () => {
+  document.getElementById('timeEditor').style.display = '';
+  document.getElementById('btnEditTimes').style.display = 'none';
+});
+document.getElementById('btnCancelEdit')?.addEventListener('click', () => {
+  document.getElementById('timeEditor').style.display = 'none';
+  document.getElementById('btnEditTimes').style.display = '';
+});
+</script>
+
+<%- include('../partials/footer') %>

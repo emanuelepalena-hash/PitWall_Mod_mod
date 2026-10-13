@@ -1,0 +1,431 @@
+/*
+ * PitWall — gestión y cronometraje de carreras de slot
+ * Copyright (C) 2026 Víctor González Gómez <vgonzalezgomez@outlook.es>
+ *
+ * This program is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU Affero General Public License as published by
+ * the Free Software Foundation, either version 3 of the License, or
+ * (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU Affero General Public License for more details.
+ *
+ * You should have received a copy of the GNU Affero General Public License
+ * along with this program.  If not, see <https://www.gnu.org/licenses/>.
+ */
+// Vista de control de pilotos por QR (Fase 2 del feature de turnos).
+//
+// /control/shifts → vista live para el operador con lector QR USB.
+//   - Auto-detecta la manga "actual" (championship + pending|active).
+//   - Si no hay ninguna, muestra estado vacío con auto-refresh por socket.
+//   - El POST de scan va al endpoint estándar:
+//       POST /races/:raceId/mangas/:mangaId/checkin
+//     ya implementado en SessionController.driverCheckin.
+
+const Race          = require('../models/Race');
+const Manga         = require('../models/Manga');
+const DriverShift   = require('../models/DriverShift');
+const TimingService = require('../services/TimingService');
+const ExportGuard   = require('../services/ExportGuard');
+const db            = require('../config/database');
+const { evaluate }  = require('../utils/shiftCompliance');
+const { fmtHmsFijo } = require('../utils/duration');
+const Settings      = require('../models/Settings');
+const { addClubBand } = require('../utils/excelClubBand');
+
+// HTTPS local para la cámara: si está activado, el kiosco puede ofrecer el
+// enlace seguro cuando se abre por HTTP en un dispositivo de la red (donde el
+// navegador bloquea la cámara). { enabled, port }.
+function httpsInfo() {
+  return {
+    enabled: Settings.get('https_enabled', '0') === '1',
+    port:    parseInt(Settings.get('https_port', '') || '3443', 10) || 3443,
+  };
+}
+
+class ControlController {
+
+  // Detecta la manga "actual" para escaneo: prioridad TimingService activo,
+  // luego cualquier manga active/pending de una carrera championship activa.
+  static _detectCurrentManga() {
+    // 1) Manga viva en TimingService
+    if (TimingService.session && TimingService.session.race && TimingService.session.race.type === 'championship') {
+      return {
+        manga: TimingService.session.manga,
+        race:  TimingService.session.race,
+        liveStatus: TimingService.isPaused ? 'paused' : 'running',
+      };
+    }
+
+    // 2) Buscar en BD: race championship + status='active', manga active o pending
+    const row = db.prepare(`
+      SELECT m.id AS manga_id, m.number AS manga_number, m.status AS manga_status,
+             m.tanda_id, r.id AS race_id, r.name AS race_name, r.type, r.format,
+             r.manga_duration_minutes, r.driver_min_total_ms, r.driver_max_total_ms,
+             r.driver_change_lockout_ms, r.driver_max_runs,
+             r.circuits_config, r.lanes_count
+      FROM mangas m
+      JOIN races r ON r.id = m.race_id
+      WHERE r.type = 'championship'
+        AND r.format = 'team'
+        AND r.status = 'active'
+        AND m.status IN ('active', 'pending')
+      ORDER BY CASE m.status WHEN 'active' THEN 0 ELSE 1 END, m.id ASC
+      LIMIT 1
+    `).get();
+
+    if (!row) return null;
+
+    return {
+      manga: { id: row.manga_id, number: row.manga_number, status: row.manga_status, tanda_id: row.tanda_id, race_id: row.race_id },
+      race:  {
+        id: row.race_id, name: row.race_name, type: row.type, format: row.format,
+        manga_duration_minutes: row.manga_duration_minutes,
+        driver_min_total_ms: row.driver_min_total_ms,
+        driver_max_total_ms: row.driver_max_total_ms,
+        driver_change_lockout_ms: row.driver_change_lockout_ms,
+        driver_max_runs: row.driver_max_runs,
+        // El panel de pre-arme agrupa los carriles por caja: sin esto caería
+        // todo en una sola caja de N carriles.
+        circuits_config: row.circuits_config,
+        lanes_count: row.lanes_count,
+      },
+      liveStatus: row.manga_status === 'active' ? 'unknown' : 'standby',
+    };
+  }
+
+  // GET /control/shifts
+  static live(req, res) {
+    const current = ControlController._detectCurrentManga();
+    if (!current) {
+      return res.render('control/shifts-live', {
+        t: req.t,
+        current:  null,
+        lanes:    [],
+        shifts:   [],
+        summary:  [],
+        history:  [],
+        rosterByLane: {},
+        restingTeams: [],
+        mangaDurationMs: 0,
+        https: httpsInfo(),
+      });
+    }
+    const { manga, race, liveStatus } = current;
+
+    // Carriles de la manga: los que corren (sin descanso) y los que descansan.
+    const allLanes = Manga.getLanes(manga.id);
+    const lanes = allLanes.filter(l => !l.is_rest);
+
+    // Shifts abiertos por carril (lo que está sonando ahora mismo)
+    const openShifts = DriverShift.findAllOpenByManga(manga.id);
+    const openByLane = {};
+    openShifts.forEach(s => { openByLane[s.lane] = s; });
+
+    // Snapshot in-memory de TimingService (driving_ms al segundo, no de BD)
+    const liveActive = TimingService.activeMangaId === manga.id
+      ? TimingService.getActiveShifts()
+      : {};
+
+    // Histórico completo de la manga para construir lane history (cuántos shifts
+    // por carril, lista en cards laterales)
+    const history = DriverShift.historyByManga(manga.id);
+
+    // Resumen por piloto a nivel CARRERA. Incluimos a TODOS los pilotos de la
+    // carrera (no solo a quien ya tiene turnos), para que en standby/pre-arme la
+    // lista salga completa con 0:00 y se vaya actualizando al correr.
+    const summary = DriverShift.raceSummaryAllPilots(race.id);
+
+    // Roster de un equipo: todos sus pilotos con su tiempo total y nº de turnos
+    // en la carrera. Reusa `summary` (por nombre); los que aún no han corrido
+    // salen a 0. Sustituye al antiguo historial de la card.
+    const summaryByName = {};
+    summary.forEach(r => { summaryByName[r.profile_name] = r; });
+    const rosterForTeam = (teamId) => {
+      if (!teamId) return [];
+      const members = db.prepare('SELECT id, name FROM drivers WHERE team_id = ? ORDER BY name ASC').all(teamId);
+      return members.map(m => {
+        const s = summaryByName[m.name];
+        return {
+          driver_id: m.id,
+          name:     m.name,
+          total_ms: s ? s.total_ms : 0,
+          runs:     s ? s.runs_count : 0,
+          category: s ? s.profile_category : null,
+        };
+      });
+    };
+    const rosterByLane = {};
+    lanes.forEach(l => { rosterByLane[l.lane] = rosterForTeam(l.team_id); });
+
+    // Equipos que descansan esta manga (is_rest=1, lane=0). El nº de descanso
+    // se deriva ordenando alfabéticamente, como en el directo: "Descanso n/N".
+    const resting = allLanes.filter(l => l.is_rest)
+      .sort((a, b) => (a.team_name || a.driver_name || '').localeCompare(b.team_name || b.driver_name || ''));
+    const restingTeams = resting.map((l, i) => ({
+      team_id:   l.team_id,
+      team_name: l.team_name || l.driver_name || '—',
+      restPos:   i + 1,
+      restTotal: resting.length,
+      roster:    rosterForTeam(l.team_id),
+    }));
+
+    // Duración de manga (ms) para precargar la corrección manual de tiempo.
+    const durRow = db.prepare('SELECT actual_duration_ms FROM mangas WHERE id = ?').get(manga.id);
+    const mangaDurationMs = (durRow && durRow.actual_duration_ms > 0)
+      ? durRow.actual_duration_ms
+      : (race.manga_duration_minutes || 0) * 60000;
+
+    // Panel de pre-arme: una casilla por carril, agrupadas por caja. Con 24
+    // carriles la cuadrícula de tarjetas va paginada y rota sola, así que el
+    // equipo que falta por fichar puede estar en otra página. Esto enseña los
+    // 24 de golpe. Los carriles en descanso no cuentan: no fichan.
+    const prearme = ControlController._prearmeBoxes(race, lanes, openByLane);
+
+    res.render('control/shifts-live', {
+      t: req.t,
+      current: { manga, race, liveStatus },
+      lanes,
+      openByLane,
+      liveActive,   // { lane → { shiftId, drivingMs } }
+      history,
+      summary,
+      rosterByLane,
+      restingTeams,
+      mangaDurationMs,
+      prearme,
+      https: httpsInfo(),
+    });
+  }
+
+  // GET /races/:id/shifts — vista histórica por carrera
+  static raceHistory(req, res) {
+    const race = Race.findById(req.params.id);
+    if (!race) return res.status(404).render('error', { t: req.t, code: 404, message: req.t('errors.not_found') });
+    if (race.type !== 'championship') {
+      return res.render('control/race-shifts', { t: req.t, race, notChampionship: true, mangas: [], summary: [] });
+    }
+
+    // Resumen por piloto a nivel CARRERA, con TODOS los inscritos: quien nunca
+    // fichó sale a 0:00 y bajo mínimo, en vez de desaparecer del histórico.
+    const summary = DriverShift.raceSummaryAllPilots(race.id);
+
+    // Para cada manga de la carrera, sus shifts (cronología)
+    const mangas = db.prepare(`
+      SELECT m.id, m.number, m.status, m.tanda_id, t.number AS tanda_number
+      FROM mangas m
+      LEFT JOIN tandas t ON t.id = m.tanda_id
+      WHERE m.race_id = ?
+      ORDER BY m.id ASC
+    `).all(race.id);
+
+    mangas.forEach(m => {
+      m.shifts = DriverShift.historyByManga(m.id);
+    });
+
+    res.render('control/race-shifts', { t: req.t, race, notChampionship: false, mangas, summary });
+  }
+
+  /**
+   * Reparte los carriles de la manga entre las cajas (`circuits_config`) y marca
+   * cuáles han fichado ya su QR. Puro: no toca BD ni sesión.
+   *
+   * @param {{circuits_config:string, lanes_count:number}} race
+   * @param {Array<{lane:number, team_name?:string, driver_name?:string}>} lanes
+   *        SOLO los carriles que corren (los de descanso ya vienen filtrados).
+   * @param {Object} openByLane  lane → turno abierto (fichado)
+   * @returns {{boxes:Array, total:number, scanned:number, missing:Array, complete:boolean}}
+   */
+  static _prearmeBoxes(race, lanes, openByLane) {
+    let cfg = [];
+    try { cfg = JSON.parse(race.circuits_config || '[]'); } catch {}
+    if (!Array.isArray(cfg) || !cfg.length) cfg = [race.lanes_count || lanes.length];
+
+    const porCarril = {};
+    lanes.forEach(l => { porCarril[l.lane] = l; });
+
+    const boxes = [];
+    const missing = [];
+    let total = 0, scanned = 0, off = 0;
+
+    cfg.forEach((n, ci) => {
+      const cells = [];
+      for (let lane = off + 1; lane <= off + n; lane++) {
+        const l = porCarril[lane];
+        if (!l) { cells.push({ lane, active: false }); continue; }   // descanso o carril libre
+        const ok = !!openByLane[lane];
+        const teamName = l.team_name || l.driver_name || '—';
+        cells.push({ lane, active: true, scanned: ok, teamName });
+        total++;
+        if (ok) scanned++;
+        else missing.push({ lane, teamName });
+      }
+      boxes.push({ index: ci, number: ci + 1, cells });
+      off += n;
+    });
+
+    return { boxes, total, scanned, missing, complete: total > 0 && missing.length === 0 };
+  }
+
+  // ── Informe final de turnos ───────────────────────────────────────────────
+  // El documento con el que se resuelve una reclamación: quién condujo cuánto,
+  // en cuántos turnos, y qué reglas incumplió. Con la carrera terminada el
+  // MÍNIMO ya se juzga (final: true), a diferencia de la vista en directo.
+
+  /** Datos comunes al informe en sus tres formatos. */
+  static _reportData(raceId) {
+    const race = Race.findById(raceId);
+    if (!race || race.type !== 'championship') return null;
+
+    const reglas = {
+      minMs:   race.driver_min_total_ms || 0,
+      maxMs:   race.driver_max_total_ms || 0,
+      maxRuns: race.driver_max_runs || 0,
+      final:   true,
+    };
+    const summary = DriverShift.raceSummaryAllPilots(race.id).map(r => ({
+      ...r,
+      compliance: evaluate({ totalMs: r.total_ms, runs: r.runs_count }, reglas),
+    }));
+
+    const infracciones = summary.filter(r => r.compliance.status === 'bad');
+    const manuales     = summary.reduce((n, r) => n + (r.manual_count || 0), 0);
+
+    // Cronología por manga, para justificar cada total.
+    const mangas = db.prepare(`
+      SELECT m.id, m.number, m.status, m.tanda_id, t.number AS tanda_number
+      FROM mangas m
+      LEFT JOIN tandas t ON t.id = m.tanda_id
+      WHERE m.race_id = ?
+      ORDER BY m.id ASC
+    `).all(race.id);
+    mangas.forEach(m => { m.shifts = DriverShift.historyByManga(m.id); });
+
+    return { race, reglas, summary, mangas, infracciones, manuales };
+  }
+
+  // GET /races/:id/shifts/report
+  static shiftsReport(req, res) {
+    const data = ControlController._reportData(req.params.id);
+    if (!data) return res.status(404).render('error', { t: req.t, code: 404, message: req.t('errors.not_found') });
+    return ControlController._sendReport(req, res, data);
+  }
+
+  // GET /races/:id/shifts/report.html — descarga AUTOCONTENIDA (CSS embebido,
+  // sin JS ni assets del servidor), para adjuntar a una reclamación.
+  static shiftsReportHtml(req, res) {
+    req._exportMode = true;
+    return ControlController.shiftsReport(req, res);
+  }
+
+  static _sendReport(req, res, data) {
+    const locals = { t: req.t, ...data };
+    if (!req._exportMode) return res.render('control/shifts-report', locals);
+
+    res.render('control/shifts-report', { ...locals, hideNavbar: true, inlineClubLogo: true }, (err, html) => {
+      if (err) { console.error('[shifts-report] render error:', err.message); return res.status(500).send(req.t('errors.export_error')); }
+      const SessionController = require('./SessionController');
+      const out = SessionController._inlineForExport(html);
+      const slug = String(data.race.name || 'carrera').replace(/[^a-z0-9]+/gi, '-').toLowerCase();
+      res.setHeader('Content-Type', 'text/html; charset=utf-8');
+      res.setHeader('Content-Disposition', `attachment; filename="turnos-${slug}.html"`);
+      res.send(out);
+    });
+  }
+
+  // GET /races/:id/shifts/report.xlsx
+  static async shiftsReportExcel(req, res) {
+    const data = ControlController._reportData(req.params.id);
+    if (!data) return res.status(404).send(req.t('errors.not_found'));
+
+    if (ExportGuard.isMangaLive()) return ExportGuard.deny(req, res);
+
+    const { race, reglas, summary } = data;
+
+    const ExcelJS = require('exceljs');
+    const wb = new ExcelJS.Workbook();
+    wb.creator = 'PitWall';
+    const ws = wb.addWorksheet(req.t('common.turnos_2'));
+
+    const COL = { header: 'FF161B22', headerFg: 'FFFFFFFF', border: 'FFD0D7DE',
+                  bad: 'FFFDECEC', warn: 'FFFFFBE6', band: 'FFF6F8FA' };
+    const thinBorder = {
+      top:    { style: 'thin', color: { argb: COL.border } },
+      left:   { style: 'thin', color: { argb: COL.border } },
+      bottom: { style: 'thin', color: { argb: COL.border } },
+      right:  { style: 'thin', color: { argb: COL.border } },
+    };
+
+    addClubBand(wb, ws, 7, { pitwallLogo: true });
+    const filaTitulo = ws.addRow([`${race.name} — ${req.t('shifts-report.informe_de_turnos_de_piloto')}`]);
+    ws.mergeCells(filaTitulo.number, 1, filaTitulo.number, 7);
+    filaTitulo.getCell(1).font = { bold: true, size: 14 };
+    filaTitulo.height = 22;
+
+    const filaSub = ws.addRow([]);
+    ws.mergeCells(filaSub.number, 1, filaSub.number, 7);
+    const sub = filaSub.getCell(1);
+    const lim = [];
+    if (reglas.minMs)   lim.push(`${req.t('control.min')} ${fmtHmsFijo(reglas.minMs)}`);
+    if (reglas.maxMs)   lim.push(`${req.t('control.max')} ${fmtHmsFijo(reglas.maxMs)}`);
+    if (reglas.maxRuns) lim.push(`${req.t('control.max_turnos')} ${reglas.maxRuns}`);
+    sub.value = lim.length ? (req.t('control.limites')) + lim.join(' · ')
+                           : (req.t('control.sin_limites_configurados'));
+    sub.font = { italic: true, color: { argb: 'FF6E7681' } };
+
+    const cabecera = ['xls_piloto', 'xls_categoria', 'xls_tiempo_total', 'xls_turnos', 'xls_max_turnos', 'xls_correcciones', 'xls_estado']
+      .map(k => req.t('shifts-report.' + k));
+    const filaCab = ws.addRow([]);            // fila vacía de separación
+    filaCab.height = 6;
+    const head = ws.addRow(cabecera);
+    head.eachCell(c => {
+      c.font = { bold: true, color: { argb: COL.headerFg } };
+      c.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: COL.header } };
+      c.border = thinBorder;
+      c.alignment = { horizontal: 'center' };
+    });
+
+    const etiqueta = (c) => {
+      if (c.overMax)  return req.t('shifts-report.pasado_de_tiempo');
+      if (c.overRuns) return req.t('shifts-report.pasado_de_turnos');
+      if (c.underMin) return req.t('shifts-report.bajo_minimo');
+      if (c.nearMax)  return req.t('control.al_90_del_maximo');
+      if (c.nearRuns) return req.t('common.ultimo_turno');
+      return 'OK';
+    };
+
+    summary.forEach(r => {
+      const c = r.compliance;
+      const row = ws.addRow([
+        r.profile_name,
+        r.profile_category || '',
+        fmtHmsFijo(r.total_ms),
+        r.runs_count,
+        reglas.maxRuns || '',
+        r.manual_count || 0,
+        etiqueta(c),
+      ]);
+      const fondo = c.status === 'bad' ? COL.bad : c.status === 'warn' ? COL.warn : null;
+      row.eachCell(cell => {
+        cell.border = thinBorder;
+        if (fondo) cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: fondo } };
+      });
+      row.getCell(3).alignment = { horizontal: 'right' };
+      row.getCell(4).alignment = { horizontal: 'center' };
+      if (c.status === 'bad') row.getCell(7).font = { bold: true };
+    });
+
+    ws.columns = [{ width: 28 }, { width: 12 }, { width: 14 }, { width: 9 },
+                  { width: 12 }, { width: 20 }, { width: 22 }];
+
+    const slug = String(race.name || 'carrera').replace(/[^a-z0-9]+/gi, '-').toLowerCase();
+    res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+    res.setHeader('Content-Disposition', `attachment; filename="turnos-${slug}.xlsx"`);
+    await wb.xlsx.write(res);
+    res.end();
+  }
+}
+
+module.exports = ControlController;

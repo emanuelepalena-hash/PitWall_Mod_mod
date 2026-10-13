@@ -1,0 +1,1260 @@
+<%- include('../partials/header', { pageTitle: t('livestats.titulo', { nombre: race.name }) }) %>
+
+<div class="ls-wrap">
+
+  <a href="/" class="vt-back-link" style="margin-bottom:.8rem">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M19 12H5M12 19l-7-7 7-7"/></svg>
+    <%= t('common.inicio') %>
+  </a>
+
+  <!-- ── Barra superior: selección ────────────────────────────────────── -->
+  <div class="ls-bar">
+    <div class="ls-bar__title">
+      <strong><%= race.name %></strong>
+      <% if (isActive) { %>
+        <span class="ls-badge ls-badge--live"><%= t('livestats.en_directo') %></span>
+      <% } %>
+    </div>
+    <div class="ls-bar__controls" data-lsview="manga">
+      <select id="lsManga" class="ls-select" title="<%= t('common.manga') %>">
+        <% allMangas.forEach(m => { %>
+          <option value="<%= m.id %>" <%= m.id === selectedMangaId ? 'selected' : '' %>>
+            T<%= m.tandaNumber %> · M<%= m.number %> (<%= m.status %>)
+          </option>
+        <% }) %>
+      </select>
+      <select id="lsEntity" class="ls-select" title="<%= t('livestats.yo_soy') %>">
+        <option value=""><%= t('show.elige_tu_equipo_piloto') %></option>
+        <% entityRows.forEach(e => { %>
+          <option value="<%= e.entity_type %>_<%= e.entity_id %>"><%= e.entity_name %><%= e.categoria ? ' - ' + e.categoria : '' %></option>
+        <% }) %>
+      </select>
+      <label class="ls-toggle" title="<%= t('livestats.toggle_title') %>">
+        <input type="checkbox" id="lsIncludeOutliers"> <%= t('show.con_salidas') %>
+      </label>
+    </div>
+  </div>
+
+  <!-- ── Cronómetro ─────────────────────────────────────────────────────── -->
+  <div class="ls-clock" id="lsClock">
+    <div class="ls-clock__remaining" id="lsClockRemaining">--:--</div>
+    <div class="ls-clock__meta" id="lsClockMeta">—</div>
+  </div>
+
+  <!-- ── Pestañas: qué bloque de datos mostrar ──────────────────────────── -->
+  <div class="ls-tabs" id="lsTabs">
+    <button type="button" class="ls-tab is-active" data-lstab="manga">📊 <%= t('show.manga_actual') %></button>
+    <button type="button" class="ls-tab" data-lstab="proj">🏁 <%= t('show.clasificacion_proyectada') %></button>
+    <button type="button" class="ls-tab" data-lstab="carril">🛣️ <%= t('show.comparativa_por_carril') %></button>
+  </div>
+
+  <!-- ── Panel del piloto (modo B) ──────────────────────────────────────── -->
+  <section class="ls-section" id="lsMeSection" data-lsview="manga proj" hidden>
+    <h2 class="ls-section__title">🏁 <span id="lsMeName">—</span></h2>
+    <!-- Conmutador de alcance de la consistencia (global: tarjeta + comparativa) -->
+    <div class="ls-consmode-bar">
+      <span class="ls-consmode-bar__lbl">📊 <%= t('show.consistencia') %></span>
+      <div class="ls-consmode" id="lsConsModes" role="group" aria-label="<%= t('show.alcance_de_la_consistencia') %>">
+        <button type="button" class="ls-cmode is-active" data-consscope="clean"><%= t('show.sin_salidas') %></button>
+        <button type="button" class="ls-cmode" data-consscope="all"><%= t('show.con_salidas') %></button>
+      </div>
+      <span class="ls-consmode-bar__hint" id="lsConsHint"></span>
+    </div>
+    <div class="ls-grid ls-grid--4">
+      <div class="ls-card">
+        <div class="ls-card__label"><%= t('livestats.posicion') %></div>
+        <div class="ls-card__big" id="lsMePos">—</div>
+      </div>
+      <div class="ls-card">
+        <div class="ls-card__label" id="lsMeLapsLabel"><%= t('show.vueltas_manga') %></div>
+        <div class="ls-card__big" id="lsMeLaps">—</div>
+      </div>
+      <div class="ls-card">
+        <div class="ls-card__label"><%= t('client.common.mejor') %></div>
+        <div class="ls-card__big" id="lsMeBest">—</div>
+      </div>
+      <div class="ls-card">
+        <div class="ls-card__label"><%= t('client.common.media') %></div>
+        <div class="ls-card__big" id="lsMeAvg">—</div>
+      </div>
+      <div class="ls-card">
+        <div class="ls-card__label"><%= t('livestats.delta_consistencia') %></div>
+        <div class="ls-card__big" id="lsMeDelta">—</div>
+        <div class="ls-card__hint" id="lsMeDeltaHint">avg - best</div>
+      </div>
+      <div class="ls-card">
+        <div class="ls-card__label"><%= t('livestats.salidas_pits') %></div>
+        <div class="ls-card__big" id="lsMeExits">—</div>
+      </div>
+      <div class="ls-card">
+        <div class="ls-card__label"><%= t('livestats.consistencia') %></div>
+        <div class="ls-card__big ls-cons__pct" id="lsMeConsistency">—</div>
+        <div class="ls-cons__level" id="lsMeConsLevel" hidden>
+          <span class="ls-cons__dot"></span><span class="ls-cons__txt">—</span>
+          <span class="ls-cons__de" id="lsMeConsDe"></span>
+        </div>
+        <div class="ls-card__hint"><%= t('show.variacion_vuelta_a_vuelta') %></div>
+      </div>
+      <div class="ls-card ls-card--wide" id="lsMeLostCard">
+        <div class="ls-card__label"><%= t('livestats.tiempo_perdido') %></div>
+        <div class="ls-card__big" id="lsMeLost">—</div>
+        <div class="ls-card__hint" id="lsMeLostEquiv"><%= t('livestats.aprox_vacio') %></div>
+      </div>
+      <div class="ls-card ls-card--wide" id="lsMeSectorsCard">
+        <div class="ls-card__label"><%= t('livestats.tramos') %></div>
+        <div class="ls-sectors" id="lsMeSectors">—</div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ── Comparativa en vivo ────────────────────────────────────────────── -->
+  <section class="ls-section" id="lsCmpSection" data-lsview="manga proj" hidden>
+    <h2 class="ls-section__title">⚔️ <%= t('show.comparativa_en_vivo') %></h2>
+    <div class="ls-bar__controls" style="margin-bottom:.8rem">
+      <select id="lsCompare1" class="ls-select" title="<%= t('show.rival_1') %>">
+        <option value=""><%= t('show.comparate_con') %></option>
+      </select>
+      <select id="lsCompare2" class="ls-select" title="<%= t('show.rival_2_opcional') %>">
+        <option value=""><%= t('show.y_con_opcional') %></option>
+      </select>
+      <button class="ls-btn" id="lsAuto" type="button"><%= t('show.mis_rivales_cercanos_clasificacion') %></button>
+    </div>
+    <div class="ls-cmp" id="lsCmpBox" hidden>
+      <div class="ls-cmp-table-wrap">
+        <table class="ls-cmp2" id="lsCmpTable"></table>
+      </div>
+      <div class="ls-cmp-chart-modes" id="lsCmpModes">
+        <button type="button" class="ls-cmode is-active" data-cmode="pace"><%= t('show.tiempo_por_vuelta') %></button>
+        <button type="button" class="ls-cmode" data-cmode="gap"><%= t('show.sobre_la_media') %></button>
+        <button type="button" class="ls-cmode" data-cmode="gaplaps"><%= t('show.gap_de_vueltas') %></button>
+      </div>
+      <div class="ls-cmp-chart-wrap"><canvas id="lsCmpChart"></canvas></div>
+      <div class="ls-cmp__verdicts" id="lsCmpVerdicts"></div>
+    </div>
+  </section>
+
+  <!-- ── Clasificación PROYECTADA de carrera (toda la carrera) ──────────── -->
+  <section class="ls-section" id="lsProjSection" data-lsview="proj" hidden>
+    <h2 class="ls-section__title">🏁 <%= t('show.clasificacion_proyectada_de_carrera') %></h2>
+    <p class="ls-proj-hint"><%= t('show.estimacion_al_final_de_la_carrera_no_solo_la') %></p>
+    <div class="ls-table-wrap">
+      <table class="ls-table" id="lsProjTable">
+        <thead>
+          <tr>
+            <th>#</th>
+            <th><%= t('common.participante') %></th>
+            <th title="<%= t('show.vueltas_proyectadas_al_final') %>"><%= t('common.v_proy') %></th>
+            <th><%= t('client.common.total') %></th>
+            <th title="<%= t('common.vueltas_proyectadas_respecto_al_de_delante') %>"><%= t('show.gap_sig') %></th>
+            <th title="<%= t('show.vueltas_proyectadas_respecto_al_lider') %>"><%= t('show.gap_lider') %></th>
+            <th><%= t('client.common.media') %></th>
+            <th title="<%= t('show.media_por_vuelta_que_necesitas_para_alcanzar_al') %>"><%= t('common.p_subir') %></th>
+            <th title="<%= t('show.salidas_de_pista_pit_stops_cambios_de_neumatico') %>"><%= t('show.sal_pit_total') %></th>
+            <th title="<%= t('show.tiempo_perdido_en_esas_salidas_pits_exceso') %>"><%= t('show.perdido_total') %></th>
+          </tr>
+        </thead>
+        <tbody id="lsProjBody"></tbody>
+      </table>
+    </div>
+  </section>
+
+  <!-- ── Clasificación de la manga actual ───────────────────────────────── -->
+  <section class="ls-section" data-lsview="manga">
+    <h2 class="ls-section__title">📋 <%= t('show.clasificacion_de_manga_actual') %></h2>
+    <div class="ls-table-wrap">
+      <table class="ls-table" id="lsTable">
+        <thead>
+          <tr>
+            <th>#</th>
+            <th><%= t('common.participante') %></th>
+            <th><%= t('client.common.carril') %></th>
+            <% if (race.format === 'team') { %><th><%= t('client.common.piloto') %></th><% } %>
+            <th>V</th>
+            <th title="<%= t('show.vueltas_respecto_al_de_delante_en_la_manga_a') %>"><%= t('show.gap_sig') %></th>
+            <th><%= t('client.common.mejor') %></th>
+            <th><%= t('client.common.media') %></th>
+            <th>Δ</th>
+            <th title="<%= t('show.salidas_de_pista_pit_stops_cambios_de_neumatico_2') %>"><%= t('client.common.salidas') %></th>
+            <th><%= t('show.perdido') %></th>
+          </tr>
+        </thead>
+        <tbody id="lsTableBody"></tbody>
+      </table>
+    </div>
+  </section>
+
+  <!-- ── Comparativa por carril ──────────────────────────────────────────── -->
+  <% if (typeof lanesList !== 'undefined' && lanesList.length) { %>
+  <section class="ls-section" id="lsLaneSection" data-lsview="carril">
+    <h2 class="ls-section__title">🛣️ <%= t('show.comparativa_por_carril') %></h2>
+    <div class="ls-bar__controls" style="margin-bottom:.8rem; display:flex; gap:.5rem; flex-wrap:wrap">
+      <select id="lsLane" class="ls-select" title="<%= t('client.common.carril') %>">
+        <option value="">— <%= t('client.common.carril') %> —</option>
+        <% lanesList.forEach(function (ln) { %><option value="<%= ln %>"><%= (t('common.carril')) + ln %></option><% }); %>
+      </select>
+      <% for (var i = 1; i <= 3; i++) { %>
+        <select id="lsLaneE<%= i %>" class="ls-select" title="<%= (t('show.equipo_piloto')) + i %>">
+          <option value="">— <%= (t('show.equipo_piloto')) + i %> —</option>
+          <% entityRows.forEach(function (e) { %><option value="<%= e.entity_type %>_<%= e.entity_id %>"><%= e.entity_name %><%= e.categoria ? ' - ' + e.categoria : '' %></option><% }); %>
+        </select>
+      <% } %>
+      <button type="button" id="lsLaneClear" class="ls-select" style="cursor:pointer">
+        ✕ <%= t('show.limpiar_filtros') %>
+      </button>
+    </div>
+    <div class="ls-cmp" id="lsLaneBox" hidden>
+      <div class="ls-cmp-table-wrap"><table class="ls-cmp2" id="lsLaneTable"></table></div>
+    </div>
+
+    <!-- Cuadrícula por defecto (sin filtros): un equipo/piloto por fila, un
+         grupo de columnas por carril con lo que hizo en ese tramo. -->
+    <div class="ls-cmp" id="lsLaneGridBox">
+      <div class="ls-cmp-scrolltop" id="lsGridScrollTop"><div id="lsGridScrollTopInner"></div></div>
+      <div class="ls-cmp-table-wrap" id="lsGridScrollBottom"><table class="ls-cmp2 ls-grid-table" id="lsLaneGridTable"></table></div>
+    </div>
+  </section>
+  <% } %>
+
+  <a href="/race-stats" class="ls-back">← <%= t('show.cambiar_carrera') %></a>
+</div>
+
+<style>
+  .ls-wrap { max-width: 1100px; margin: 0 auto; padding: 1rem }
+  .ls-bar { display:flex; justify-content:space-between; align-items:center; gap:1rem; flex-wrap:wrap; margin-bottom:1rem }
+  .ls-bar__title { font-size:1.4rem; color:#e6edf3 }
+  .ls-bar__controls { display:flex; gap:.5rem; flex-wrap:wrap; align-items:center }
+  .ls-select { background:#161b22; color:#c9d1d9; border:1px solid #30363d; border-radius:6px; padding:.5rem .7rem; font-size:.95rem; min-width:160px }
+  .ls-toggle { display:inline-flex; align-items:center; gap:.4rem; color:#8b949e; font-size:.85rem; cursor:pointer; user-select:none }
+  .ls-toggle input { transform: scale(1.2) }
+  .ls-badge { display:inline-block; padding:2px 9px; border-radius:10px; font-size:.7rem; font-weight:700; letter-spacing:.06em; margin-left:.5rem }
+  .ls-badge--live { background:#e63946; color:#fff; animation: pulse 1.5s infinite }
+  @keyframes pulse { 50% { opacity:.7 } }
+
+  .ls-clock { display:flex; align-items:baseline; gap:1rem; background:#000000; border:1px solid #30363d; border-radius:12px; padding:1rem 1.4rem; margin-bottom:1.2rem }
+  .ls-clock__remaining { font-family:'Share Tech Mono', monospace; font-size:2.6rem; color:#f6c90e; font-weight:700; line-height:1 }
+  .ls-clock__meta { color:#8b949e; font-size:.9rem }
+
+  .ls-section { margin-bottom:1.6rem; background:#000000; border:1px solid #21262d; border-radius:12px; padding:1rem 1.1rem }
+  .ls-section__title { color:#e6edf3; font-size:1.1rem; margin:0 0 .8rem }
+
+  .ls-grid { display:grid; gap:.7rem }
+  .ls-grid--4 { grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)) }
+  .ls-card { background:#161b22; border:1px solid #30363d; border-radius:10px; padding:.7rem .9rem }
+  .ls-card--wide { grid-column: 1 / -1 }
+  .ls-card__label { color:#8b949e; font-size:.72rem; text-transform:uppercase; letter-spacing:.05em }
+  .ls-card__big { font-family:'Share Tech Mono', monospace; color:#e6edf3; font-size:1.7rem; font-weight:700; margin-top:.15rem }
+  .ls-card__hint { color:#6e7681; font-size:.75rem; margin-top:.15rem }
+
+  .ls-sectors { display:flex; gap:.5rem; flex-wrap:wrap; margin-top:.3rem }
+  .ls-sector { flex:1; min-width:90px; background:#000000; border:1px solid #21262d; border-radius:8px; padding:.5rem .6rem }
+  .ls-sector__lbl { color:#6e7681; font-size:.7rem; text-transform:uppercase; letter-spacing:.05em }
+  .ls-sector__val { font-family:'Share Tech Mono', monospace; color:#c9d1d9; font-weight:700; font-size:1.1rem }
+  .ls-sector__meta { color:#6e7681; font-size:.7rem }
+
+  .ls-cmp { background:#161b22; border:1px solid #30363d; border-radius:10px; padding:.9rem 1rem }
+  .ls-cmp-table-wrap { overflow-x:auto }
+  .ls-cmp2 { width:100%; border-collapse:collapse; font-family:'Share Tech Mono', monospace }
+  .ls-cmp-chart-modes { display:flex; gap:6px; margin:1rem 0 .2rem; }
+  .ls-cmode { background:#161b22; color:#8b949e; border:1px solid #30363d; border-radius:8px;
+    padding:5px 12px; font-size:.82rem; font-weight:600; cursor:pointer; }
+  .ls-cmode.is-active { background:rgba(88,166,255,.16); border-color:#58a6ff; color:#e6edf3; }
+  .ls-cmp-chart-wrap { position:relative; height:280px; margin:.3rem 0 .4rem; }
+  @media (max-width:640px){ .ls-cmp-chart-wrap { height:230px; } }
+  .ls-cmp2 th, .ls-cmp2 td { padding:.45rem .6rem; border-bottom:1px solid #21262d; text-align:center }
+  .ls-cmp2 thead th { vertical-align:bottom }
+  .ls-cmp2__lbl { color:#8b949e; font-size:.72rem; text-transform:uppercase; letter-spacing:.05em; text-align:left; font-family:Saira, system-ui, sans-serif; font-weight:600; white-space:nowrap }
+  .ls-cmp2 td { font-size:1.15rem; font-weight:700; color:#c9d1d9 }
+  .ls-cmp2__name { font-size:.95rem; font-weight:700; font-family:Saira, system-ui, sans-serif }
+  .ls-cmp2__sub { font-size:.7rem; color:#6e7681; font-family:Saira, system-ui, sans-serif; margin-top:.1rem }
+  .ls-cmp2 .is-me    { color:#58a6ff }
+  .ls-cmp2 .is-rv1   { color:#e6a817 }
+  .ls-cmp2 .is-rv2   { color:#3fb950 }
+  .ls-cmp2 thead .is-me  { border-bottom:2px solid #58a6ff }
+  .ls-cmp2 thead .is-rv1 { border-bottom:2px solid #e6a817 }
+  .ls-cmp2 thead .is-rv2 { border-bottom:2px solid #3fb950 }
+  .ls-cmp__verdicts { display:flex; flex-direction:column; gap:.4rem; margin-top:.8rem }
+  .ls-cmp__chip { font-size:.92rem; padding:.5rem .7rem; border-radius:8px }
+  .ls-cmp__chip b { font-weight:700 }
+  .ls-cmp__chip--good { background:rgba(46,160,67,.16); color:#3fb950 }
+  .ls-cmp__chip--bad  { background:rgba(248,81,73,.15); color:#f85149 }
+  .ls-cmp__chip--warn { background:rgba(187,128,9,.16); color:#e6a817 }
+  .ls-cmp__chip--info { background:rgba(31,111,235,.15); color:#58a6ff }
+
+  /* Cuadrícula "un equipo por fila, un carril = grupo de columnas" */
+  /* Se sale del ancho de página (max-width:1100px) para aprovechar toda la
+     resolución de pantalla — solo esta caja, el resto de la página sigue
+     centrada en su columna. */
+  #lsLaneGridBox { width:100vw; max-width:100vw; margin-left:calc(50% - 50vw); margin-right:calc(50% - 50vw);
+    box-sizing:border-box; padding-left:1.2rem; padding-right:1.2rem; border-radius:0; border-left:none; border-right:none }
+  .ls-cmp-scrolltop { overflow-x:auto; overflow-y:hidden; height:16px; margin-bottom:.3rem }
+  .ls-cmp-scrolltop div { height:1px }
+  .ls-grid-table { white-space:nowrap }
+  .ls-grid-table th, .ls-grid-table td { text-align:left; padding:.4rem .6rem }
+  .ls-grid-table thead tr.ls-grid-lanehead th { text-align:center; background:#0d1117; color:#8b949e;
+    font-size:.72rem; text-transform:uppercase; letter-spacing:.05em; border-bottom:1px solid #21262d }
+  .ls-grid-table thead tr.ls-grid-subhead th { text-align:center; color:#6e7681; font-size:.68rem;
+    text-transform:uppercase; letter-spacing:.04em; font-weight:600; border-bottom:1px solid #30363d; padding:.3rem .5rem }
+  .ls-grid-table tbody td { border-bottom:1px solid #21262d; font-size:.85rem; color:#c9d1d9; text-align:center }
+  .ls-grid-table tbody td.ls-grid-team { text-align:left; font-weight:700; font-family:Saira, system-ui, sans-serif; color:#e6edf3 }
+  .ls-grid-table tbody td.ls-grid-cat  { text-align:left; color:#8b949e; font-size:.8rem }
+  .ls-grid-table tbody td.ls-grid-total { font-weight:700; color:#f6c90e }
+  .ls-grid-table tbody tr:nth-child(even) td:not([class*="ls-grid-tone-"]) { background:rgba(255,255,255,.02) }
+  .ls-grid-driver { font-weight:600; color:#e6edf3 }
+  .ls-grid-mangas { display:flex; gap:3px; flex-wrap:wrap; margin-top:.2rem; justify-content:center }
+  .ls-grid-manga-badge { display:inline-block; background:rgba(88,166,255,.15); color:#58a6ff;
+    border-radius:6px; padding:0 5px; font-size:.62rem; font-weight:700; line-height:1.4 }
+  .ls-grid-empty { color:#484f58 }
+  /* Varios tramos (pasadas) del mismo carril, apilados y separados por una
+     línea — así se distingue de un vistazo que no es un único stint. */
+  .ls-grid-runs.ls-grid-stack { display:flex; flex-direction:column }
+  .ls-grid-run--sep { border-top:1px dashed rgba(255,255,255,.18); margin-top:.35rem; padding-top:.35rem }
+  .ls-grid-catbadge { display:inline-block; background:rgba(139,148,158,.16); color:#c9d1d9;
+    border-radius:6px; padding:1px 7px; font-size:.72rem; font-weight:700 }
+
+  /* Un tono por carril (se repite cada 6) para distinguir de un vistazo dónde
+     empieza y acaba cada grupo de columnas — la tabla llega a tener decenas. */
+  .ls-grid-tone-0 { background:rgba(88,166,255,.22) }
+  .ls-grid-tone-1 { background:rgba(230,168,23,.22) }
+  .ls-grid-tone-2 { background:rgba(63,185,80,.20) }
+  .ls-grid-tone-3 { background:rgba(248,81,149,.20) }
+  .ls-grid-tone-4 { background:rgba(188,140,255,.22) }
+  .ls-grid-tone-5 { background:rgba(57,197,207,.20) }
+  .ls-grid-table tbody td.ls-grid-team, .ls-grid-table tbody td.ls-grid-cat, .ls-grid-table tbody td.ls-grid-total,
+  .ls-grid-table thead th:not([class*="ls-grid-tone-"]) { background:#0d1117 }
+  thead .ls-grid-tone-0 { border-top:2px solid #58a6ff }
+  thead .ls-grid-tone-1 { border-top:2px solid #e6a817 }
+  thead .ls-grid-tone-2 { border-top:2px solid #3fb950 }
+  thead .ls-grid-tone-3 { border-top:2px solid #f85195 }
+  thead .ls-grid-tone-4 { border-top:2px solid #bc8cff }
+  thead .ls-grid-tone-5 { border-top:2px solid #39c5cf }
+
+  .ls-table-wrap { overflow-x:auto }
+  .ls-table { width:100%; border-collapse:collapse; font-size:.92rem }
+  .ls-proj-hint { color:#8b949e; font-size:.85rem; margin:-.3rem 0 .7rem }
+  .ls-row--me { background:rgba(88,166,255,.14) }
+  .ls-row--me td { color:#e6edf3; font-weight:600 }
+  .ls-table tr.ls-row--resting { opacity:.6 }
+  .ls-proj-resting { color:#d29922; font-size:.85em; margin-left:.4em }
+  /* Pestañas de vista (manga / proyectada / carril) */
+  .ls-tabs { display:flex; gap:8px; flex-wrap:wrap; margin:0 0 1.1rem }
+  .ls-tab { background:#161b22; color:#8b949e; border:1px solid #30363d; border-radius:10px;
+    padding:9px 16px; font-size:.95rem; font-weight:600; cursor:pointer }
+  .ls-tab.is-active { background:rgba(88,166,255,.16); border-color:#58a6ff; color:#e6edf3 }
+  .ls-wrap.ls-view-manga  [data-lsview]:not([data-lsview~="manga"])  { display:none !important }
+  .ls-wrap.ls-view-proj   [data-lsview]:not([data-lsview~="proj"])   { display:none !important }
+  .ls-wrap.ls-view-carril [data-lsview]:not([data-lsview~="carril"]) { display:none !important }
+  .ls-table th { color:#8b949e; font-size:.72rem; text-transform:uppercase; letter-spacing:.05em; text-align:left; padding:.45rem .55rem; background:#000000 }
+  .ls-table td { padding:.45rem .55rem; border-bottom:1px solid #21262d; color:#c9d1d9 }
+  .ls-table tr.is-me { background:rgba(31,111,235,.12); color:#fff }
+  .ls-table tr.is-me td:first-child::before { content:'▶ '; color:#58a6ff }
+
+  .ls-btn { background:#161b22; color:#c9d1d9; border:1px solid #30363d; border-radius:6px; padding:.5rem .8rem; cursor:pointer; font-size:.85rem }
+  .ls-btn:hover { border-color:#58a6ff }
+
+  .ls-back { display:inline-block; margin-top:1rem; color:#58a6ff; text-decoration:none }
+
+  /* ── Consistencia coloreada por nivel ─────────────────────────────────── */
+  .ls-cons__pct.is-exc  { color:#3fb950 }
+  .ls-cons__pct.is-good { color:#56d364 }
+  .ls-cons__pct.is-warn { color:#e6a817 }
+  .ls-cons__pct.is-bad  { color:#f85149 }
+  .ls-cons__pct.is-null { color:#6e7681 }
+  .ls-cons__level { display:flex; align-items:center; gap:.35rem; margin-top:.3rem;
+    font-family:Saira, system-ui, sans-serif; font-size:.8rem; font-weight:600; flex-wrap:wrap }
+  .ls-cons__dot { width:9px; height:9px; border-radius:50%; flex:0 0 auto; background:#6e7681 }
+  .ls-cons__level.is-exc  .ls-cons__dot { background:#3fb950 }
+  .ls-cons__level.is-good .ls-cons__dot { background:#56d364 }
+  .ls-cons__level.is-warn .ls-cons__dot { background:#e6a817 }
+  .ls-cons__level.is-bad  .ls-cons__dot { background:#f85149 }
+  .ls-cons__level.is-exc  .ls-cons__txt { color:#3fb950 }
+  .ls-cons__level.is-good .ls-cons__txt { color:#56d364 }
+  .ls-cons__level.is-warn .ls-cons__txt { color:#e6a817 }
+  .ls-cons__level.is-bad  .ls-cons__txt { color:#f85149 }
+  .ls-cons__de { color:#8b949e; font-weight:600 }
+  .ls-cons__de::before { content:'· ' }
+  /* Conmutador de alcance de consistencia (sin/con salidas y pits) */
+  .ls-consmode-bar { display:flex; align-items:center; gap:.6rem; flex-wrap:wrap; margin:0 0 .9rem }
+  .ls-consmode-bar__lbl { color:#8b949e; font-size:.75rem; text-transform:uppercase; letter-spacing:.05em; font-weight:600 }
+  .ls-consmode { display:inline-flex; gap:6px }
+  .ls-consmode-bar__hint { color:#6e7681; font-size:.78rem }
+  @media (max-width:640px){ .ls-consmode-bar__hint { flex-basis:100%; margin-top:-.2rem } }
+  /* Consistencia en la tabla comparativa: punto + % (+DE opcional) */
+  .ls-cmp2 .ls-conscell { display:inline-flex; align-items:center; gap:.3rem; white-space:nowrap }
+  .ls-cmp2 .ls-conscell__dot { width:8px; height:8px; border-radius:50%; flex:0 0 auto; background:#6e7681 }
+  .ls-cmp2 .ls-conscell.is-exc  .ls-conscell__dot { background:#3fb950 }
+  .ls-cmp2 .ls-conscell.is-good .ls-conscell__dot { background:#56d364 }
+  .ls-cmp2 .ls-conscell.is-warn .ls-conscell__dot { background:#e6a817 }
+  .ls-cmp2 .ls-conscell.is-bad  .ls-conscell__dot { background:#f85149 }
+  .ls-cmp2 .ls-conscell__de { font-size:.72rem; font-weight:600; color:#6e7681 }
+  @media (max-width:640px){ .ls-cmp2 .ls-conscell__de { display:none } }
+</style>
+
+<script src="/socket.io/socket.io.js"></script>
+<script src="/js/chart.umd.min.js"></script>
+<script>
+  const RACE_ID = <%= race.id %>;
+  const RACE_FORMAT = <%- JSON.stringify(race.format) %>;
+  let MANGA_ID = <%= selectedMangaId %>;
+  let myKey = localStorage.getItem('ls_entity_' + RACE_ID) || '';
+  let includeOutliers = localStorage.getItem('ls_include_outliers') === '1';
+
+  const $ = id => document.getElementById(id);
+  const fmtMs = (ms) => {
+    if (ms == null) return '—';
+    return (ms / 1000).toFixed(3).replace('.', ',') + 's';
+  };
+  const fmtSec = (ms) => {
+    if (ms == null) return '—';
+    return (ms / 1000).toFixed(2).replace('.', ',') + 's';
+  };
+  const fmtElapsed = (ms) => {
+    if (ms == null || ms < 0) return '--:--';
+    const s = Math.floor(ms / 1000);
+    const m = Math.floor(s / 60);
+    return String(m).padStart(2,'0') + ':' + String(s % 60).padStart(2,'0');
+  };
+
+  // Consistencia: nivel → clase de color y etiqueta semántica (ES/EN).
+  const LS_LANG = '<%= lang %>';
+  function consLevelClass(level) {
+    switch (level) {
+      case 'excelente': return 'is-exc';
+      case 'buena':     return 'is-good';
+      case 'irregular': return 'is-warn';
+      case 'erratica':  return 'is-bad';
+      default:          return 'is-null';
+    }
+  }
+  function consLabel(level) {
+    switch (level) {
+      case 'excelente': return I18N.t('client.common.excelente');
+      case 'buena':     return I18N.t('client.common.buena');
+      case 'irregular': return I18N.t('client.common.irregular');
+      case 'erratica':  return I18N.t('client.common.erratica');
+      default:          return '—';
+    }
+  }
+  // ±DE en segundos con 2 decimales (coma decimal como el resto de la vista).
+  function consDe(stdMs) {
+    if (stdMs == null) return '';
+    return '±' + (stdMs / 1000).toFixed(2).replace('.', ',') + ' s';
+  }
+
+  // Alcance de consistencia: 'clean' = solo vueltas limpias (por defecto),
+  // 'all' = incluye salidas y pit-stops. Un único conmutador global que afecta
+  // tanto a la tarjeta de "Mi panel" como a la fila de la comparativa.
+  let consScope = 'clean';
+  try { consScope = localStorage.getItem('ls-cons-scope') === 'all' ? 'all' : 'clean'; } catch (e) {}
+
+  // Devuelve {pct, stdMs, level} de una entidad según el alcance elegido y la
+  // vista (manga → consistency*/consistencyAll*; proyectada → raceConsistency*/
+  // raceConsistencyAll*). Maneja null en ambas variantes.
+  function consOf(e, isProj) {
+    if (!e) return { pct: null, stdMs: null, level: null };
+    const all = consScope === 'all';
+    if (isProj) {
+      return all
+        ? { pct: e.raceConsistencyAll, stdMs: e.raceConsistencyAllStdMs, level: e.raceConsistencyAllLevel }
+        : { pct: e.raceConsistency,    stdMs: e.raceConsistencyStdMs,    level: e.raceConsistencyLevel };
+    }
+    return all
+      ? { pct: e.consistencyAll, stdMs: e.consistencyAllStdMs, level: e.consistencyAllLevel }
+      : { pct: e.consistency,    stdMs: e.consistencyStdMs,    level: e.consistencyLevel };
+  }
+
+  // Initialise UI from localStorage
+  $('lsEntity').value = myKey;
+  $('lsIncludeOutliers').checked = includeOutliers;
+
+  // ── Fetch + render ────────────────────────────────────────────────────
+  let latestData = null;
+  let fetchPending = false, fetchTimer = null;
+  async function fetchData() {
+    // Un solo vuelo a la vez: la respuesta son ~213 KB y en una 24 h tarda lo
+    // suyo. Sin este cerrojo, en una red lenta se encadenaban peticiones que ya
+    // no interesaban a nadie.
+    if (fetchPending) return;
+    fetchPending = true;
+    const params = new URLSearchParams({ mangaId: MANGA_ID });
+    if (myKey) params.append('entity', myKey);
+    params.append('usePaceClean', includeOutliers ? '0' : '1');
+    try {
+      const r = await fetch(`/races/${RACE_ID}/live-stats.json?` + params.toString());
+      latestData = await r.json();
+      render(latestData);
+    } catch (err) { console.error('[live-stats]', err); }
+    finally { fetchPending = false; }
+  }
+
+  // Los cruces llegan de 2 a 3 por segundo en una carrera de resistencia, y cada
+  // uno emite `lap` Y `standings`: pedir la vista entera en cada uno era pedirla
+  // ~5 veces por segundo. Con el rebote, como mucho una cada 400 ms — el mismo
+  // criterio que el cliente Lap del móvil. Nadie distingue 400 ms en una página
+  // de estadísticas, y el servidor deja de rehacer 213 KB para tirarlos.
+  function scheduleFetch() {
+    if (fetchTimer) return;
+    fetchTimer = setTimeout(() => { fetchTimer = null; fetchData(); }, 400);
+  }
+
+  // Vista activa: 'manga' | 'proj' | 'carril'. La fijan las pestañas.
+  let currentLsView = 'manga';
+
+  // Posición que se muestra: en vista "manga" la de la MANGA; en vista
+  // "proyectada" la PROYECTADA de carrera (cae a la de manga si no hay proy.).
+  function racePosOf(data, e) {
+    if (currentLsView === 'proj') {
+      const proj = data && data.projection;
+      if (Array.isArray(proj)) {
+        const p = proj.find(x => x.name === e.entityName);
+        if (p && p.position != null) return p.position;
+      }
+    }
+    return e.position;
+  }
+
+  // Pinta la tarjeta de consistencia de "Mi panel": % grande coloreado + badge
+  // de nivel + ±DE en segundos. pct/std/level pueden ser null → estado neutro.
+  function renderMeConsistency(pct, stdMs, level) {
+    const pctEl = $('lsMeConsistency');
+    const lvlEl = $('lsMeConsLevel');
+    pctEl.className = 'ls-card__big ls-cons__pct ' + consLevelClass(level);
+    if (pct == null || level == null) {
+      pctEl.textContent = '—';
+      lvlEl.hidden = true;
+      return;
+    }
+    pctEl.textContent = pct + '%';
+    lvlEl.hidden = false;
+    lvlEl.className = 'ls-cons__level ' + consLevelClass(level);
+    lvlEl.querySelector('.ls-cons__txt').textContent = consLabel(level);
+    const de = $('lsMeConsDe');
+    const deTxt = consDe(stdMs);
+    de.textContent = deTxt;
+    de.hidden = !deTxt;
+  }
+
+  function render(data) {
+    // Clock
+    $('lsClockRemaining').textContent = data.isActive
+      ? fmtElapsed(data.remainingMs)
+      : (data.mangaStatus === 'finished' ? '00:00' : '--:--');
+    $('lsClockMeta').textContent = data.isActive
+      ? I18N.t('client.livestats.manga_en_curso', { n: data.mangaNumber, p: data.remainingMangas })
+      : I18N.t('client.livestats.manga_estado', { n: data.mangaNumber, estado: ({ finished: I18N.t('client.livestats.estado_finished'), pending: I18N.t('client.livestats.estado_pending'), active: I18N.t('client.livestats.estado_active') })[data.mangaStatus] || data.mangaStatus });
+
+    const useAvgKey = includeOutliers ? 'avgAll' : 'avgClean';
+    const useDeltaKey = includeOutliers ? 'deltaAll' : 'deltaClean';
+
+    // Tabla general
+    const tbody = $('lsTableBody');
+    const restColspan = RACE_FORMAT === 'team' ? 9 : 8;   // #, Participante + resto (Carril [+ Piloto])
+    tbody.innerHTML = data.entities.map((e, i) => {
+      if (e.isResting) {
+        return `
+      <tr class="${e.key === myKey ? 'is-me' : ''} ls-row--resting">
+        <td>${e.position}</td>
+        <td><strong>${teamHtml(e.entityName)}</strong></td>
+        <td colspan="${restColspan}" style="color:#6e7681;font-style:italic">💤 <%= t('show.descansando_esta_manga') %></td>
+      </tr>
+    `;
+      }
+      // Gap al de DELANTE en la manga actual (no al líder): vueltas si va
+      // por detrás, o diferencia de media si están empatados a vueltas —
+      // mismo criterio que el gap en segundos del directo (renderStandings).
+      // El de delante puede ser quien descansa (0 vueltas, sin media): en ese
+      // caso no hay gap real que calcular, se deja en "—".
+      const above = i > 0 ? data.entities[i - 1] : null;
+      let gapSig = '—';
+      if (above && !above.isResting) {
+        const lapGap = above.totalLaps - e.totalLaps;
+        if (lapGap > 0) gapSig = '-' + lapGap + 'v';
+        else if (above[useAvgKey] != null && e[useAvgKey] != null) gapSig = '+' + fmtSec(Math.max(0, e[useAvgKey] - above[useAvgKey]));
+      }
+      const driverTd = RACE_FORMAT === 'team' ? `<td>${e.driverName || '—'}</td>` : '';
+      return `
+      <tr class="${e.key === myKey ? 'is-me' : ''}">
+        <td>${e.position}</td>
+        <td><strong>${teamHtml(e.entityName)}</strong></td>
+        <td>${e.lane != null ? 'C' + e.lane : '—'}</td>
+        ${driverTd}
+        <td>${e.totalLaps}</td>
+        <td>${gapSig}</td>
+        <td>${fmtMs(e.bestMs)}</td>
+        <td>${fmtMs(e[useAvgKey])}</td>
+        <td>${e[useDeltaKey] != null ? '+' + fmtSec(e[useDeltaKey]) : '—'}</td>
+        <td>${e.exitCount + (e.pitStopCount ? ' / ' + e.pitStopCount + '🔧' : '')}${e.tireChangesManga ? ' · ' + e.tireChangesManga + '🛞' : ''}</td>
+        <td>${fmtSec(e.lostMs)} <span style="color:#6e7681">(≈${e.lostLapsEquiv}v)</span></td>
+      </tr>
+    `;
+    }).join('');
+
+    // Mi panel
+    const me = data.entities.find(e => e.key === myKey);
+    if (me) {
+      $('lsMeSection').hidden = false;
+      $('lsCmpSection').hidden = false;
+      const isProj = currentLsView === 'proj';
+      const pos = racePosOf(data, me);   // manga o proyectada según la vista
+      $('lsMeName').textContent = teamPlain(me.entityName) + ' · P' + pos;
+      $('lsMePos').textContent = 'P' + pos;
+      if (isProj) {
+        // ── Datos de TODA la carrera ─────────────────────────────────────
+        $('lsMeLapsLabel').textContent = <%- JSON.stringify(t('show.vueltas_carrera')) %>;
+        $('lsMeLaps').textContent = me.raceTotalLaps != null ? me.raceTotalLaps : '—';
+        $('lsMeBest').textContent = fmtMs(me.raceBestMs);
+        const rAvg = includeOutliers ? me.racePaceAllMs : me.racePaceCleanMs;
+        $('lsMeAvg').textContent  = fmtMs(rAvg);
+        const rDelta = (rAvg != null && me.raceBestMs != null) ? (rAvg - me.raceBestMs) : null;
+        $('lsMeDelta').textContent = rDelta != null ? '+' + fmtSec(rDelta) : '—';
+        $('lsMeDeltaHint').textContent = includeOutliers ? I18N.t('client.livestats.hint_carrera_con') : I18N.t('client.livestats.hint_carrera_limpia');
+        $('lsMeExits').textContent = I18N.t('client.livestats.salidas_pit', { s: me.raceExits || 0, p: me.racePits || 0 });
+        { const c = consOf(me, true); renderMeConsistency(c.pct, c.stdMs, c.level); }
+        $('lsMeLostCard').hidden = true;
+        $('lsMeSectorsCard').hidden = true;
+      } else {
+        // ── Datos de la MANGA actual ─────────────────────────────────────
+        $('lsMeLapsLabel').textContent = <%- JSON.stringify(t('show.vueltas_manga')) %>;
+        $('lsMeLaps').textContent = me.totalLaps;
+        $('lsMeBest').textContent = fmtMs(me.bestMs);
+        $('lsMeAvg').textContent  = fmtMs(me[useAvgKey]);
+        $('lsMeDelta').textContent = me[useDeltaKey] != null ? '+' + fmtSec(me[useDeltaKey]) : '—';
+        $('lsMeDeltaHint').textContent = includeOutliers ? I18N.t('client.livestats.hint_manga_con') : I18N.t('client.livestats.hint_manga_limpio');
+        $('lsMeExits').textContent = I18N.t('client.livestats.salidas_pit', { s: me.exitCount, p: me.pitStopCount });
+        { const c = consOf(me, false); renderMeConsistency(c.pct, c.stdMs, c.level); }
+        $('lsMeLostCard').hidden = false;
+        $('lsMeSectorsCard').hidden = false;
+        $('lsMeLost').textContent  = fmtSec(me.lostMs);
+        $('lsMeLostEquiv').textContent = I18N.t('client.livestats.vueltas_perdidas', { n: me.lostLapsEquiv });
+        $('lsMeSectors').innerHTML = me.sectors.map(s => `
+          <div class="ls-sector">
+            <div class="ls-sector__lbl">${s.label}</div>
+            <div class="ls-sector__val">${fmtMs(includeOutliers ? s.avgAll : s.avgClean)}</div>
+            <div class="ls-sector__meta">${I18N.t('client.livestats.vueltas_salidas', { v: s.laps, s: s.exits })}</div>
+          </div>
+        `).join('');
+      }
+    } else {
+      $('lsMeSection').hidden = true;
+      $('lsCmpSection').hidden = true;
+    }
+
+    // Comparativa en vivo
+    renderComparison(data);
+    // Clasificación proyectada de carrera
+    renderProjectedClass(data);
+  }
+
+  // Clasificación PROYECTADA de toda la carrera (la misma del directo). Solo
+  // hay proyección mientras corre una manga; entre mangas la sección se oculta.
+  function renderProjectedClass(data) {
+    const sec = $('lsProjSection');
+    if (!sec) return;
+    const proj = data && data.projection;
+    if (!Array.isArray(proj) || proj.length === 0) { sec.hidden = true; return; }
+    sec.hidden = false;
+    const me = (data.entities || []).find(e => e.key === myKey);
+    const myName = me ? me.entityName : null;
+    // raceExits/racePits/raceLostMs son de TODA la carrera (no de esta manga):
+    // vienen aparte en raceWideByKey (cubre también a quien descansa en la
+    // manga que se está viendo), casado por la MISMA key que usa entities
+    // (team_X / driver_Y), construida aquí a partir de entityType+entityId.
+    const raceWideByKey = data.raceWideByKey || {};
+    // Quién descansa en la manga REALMENTE activa ahora mismo (no depende del
+    // desplegable, que en esta pestaña ni se ve): un Set de key para marcar
+    // su fila en la clasificación de toda la carrera.
+    const restingActiveSet = new Set(data.restingKeysActive || []);
+    $('lsProjBody').innerHTML = proj.map((p, i) => {
+      const isMe = myName != null && p.name === myName;
+      // gapV/gapVLeader ya vienen calculados por el servidor (misma función
+      // que el directo y el pop-up de clasificación): gap al de DELANTE
+      // (escalonado, fila a fila) y gap al LÍDER (acumulado).
+      const gapNext   = (i === 0 || p.gapV == null)       ? '—' : '-' + p.gapV.toFixed(1).replace('.', ',') + 'v';
+      const gapLeader = (i === 0 || p.gapVLeader == null) ? '—' : '-' + p.gapVLeader.toFixed(1).replace('.', ',') + 'v';
+      const proy = p.projectedTotal != null ? p.projectedTotal.toFixed(1).replace('.', ',') + 'v' : '—';
+      // Estimada PROVISIONAL: la 1ª manga aún no ha fijado su referencia (60 %).
+      const prov = p.provisional ? '<span title="Estimada provisional" style="color:#d29922">*</span>' : '';
+      const pKey = p.entityType + '_' + p.entityId;
+      const rs = raceWideByKey[pKey];
+      const exitsPitTotal = rs ? `${rs.raceExits || 0}${rs.racePits ? ' / ' + rs.racePits + '🔧' : ''}${rs.raceTireChanges ? ' · ' + rs.raceTireChanges + '🛞' : ''}` : '—';
+      const lostTotal = rs ? `${fmtSec(rs.raceLostMs)} <span style="color:#6e7681">(≈${rs.raceLostLapsEquiv}v)</span>` : '—';
+      const restingBadge = restingActiveSet.has(pKey)
+        ? `<span class="ls-proj-resting" title="<%= t('show.descansa_en_la_manga_en_curso') %>">💤 <%= t('show.descansa') %></span>`
+        : '';
+      return `<tr class="${isMe ? 'ls-row--me' : ''}">
+        <td>${p.position}</td>
+        <td>${teamHtml(p.name)}${restingBadge}</td>
+        <td><b>${proy}</b>${prov}</td>
+        <td>${p.total}</td>
+        <td>${gapNext}</td>
+        <td>${gapLeader}</td>
+        <td>${fmtMs(p.avgLapMs)}</td>
+        <td>${p.avgToCatch != null ? fmtMs(p.avgToCatch) : '—'}</td>
+        <td>${exitsPitTotal}</td>
+        <td>${lostTotal}</td>
+      </tr>`;
+    }).join('');
+  }
+
+  // Diferencia de tiempo por vuelta, con signo y color implícito en el texto.
+  const fmtDiff = (ms) => {
+    if (ms == null) return '—';
+    const s = (Math.abs(ms) / 1000).toFixed(2).replace('.', ',');
+    return (ms < 0 ? '−' : '+') + s + 's';
+  };
+
+  // Rellena los dos selectores de rival mostrando el CARRIL de cada uno
+  // ("C3 · P2 · Nombre"), excluyendo al propio piloto. Conserva la selección.
+  function populateCompareOptions(data) {
+    const mk = e => `<option value="${e.key}">C${e.lane != null ? e.lane : '—'} · P${racePosOf(data, e)} · ${teamPlain(e.entityName)}</option>`;
+    [['lsCompare1', I18N.t('client.livestats.comparate'), 'ls_cmp1_'],
+     ['lsCompare2', I18N.t('client.livestats.y_con'), 'ls_cmp2_']].forEach(([id, ph, lk]) => {
+      const sel = $(id);
+      const want = sel.value || localStorage.getItem(lk + RACE_ID) || '';
+      sel.innerHTML = `<option value="">${ph}</option>` +
+        data.entities.filter(e => e.key !== myKey).map(mk).join('');
+      if ([...sel.options].some(o => o.value === want)) sel.value = want;
+    });
+  }
+
+  // Diferencia de ritmo (media/vuelta) entre yo y un rival. <0 = yo más rápido.
+  function paceBetween(me, r) {
+    const k = includeOutliers ? 'avgAll' : 'avgClean';
+    return (me[k] != null && r[k] != null) ? me[k] - r[k] : null;
+  }
+
+  // Veredicto EN PRESENTE para un rival: gap de vueltas (manga) + tendencia de
+  // ritmo. Sin proyecciones a futuro.
+  function verdictChip(me, r) {
+    const gap = me.totalLaps - r.totalLaps;   // >0 = voy por delante en la manga
+    const pace = paceBetween(me, r);
+    const faster = pace != null && pace < 0;
+    const paceTxt = pace != null ? ` (${fmtDiff(pace)}/v)` : '';
+    let cls, text;
+    const g = Math.abs(gap);
+    const vars = { v: g === 1 ? I18N.t('client.livestats.una_vuelta') : I18N.t('client.livestats.n_vueltas', { n: g }), p: paceTxt };
+    if (gap > 0) {
+      if (faster)        { cls = 'good'; text = I18N.t('client.livestats.delante_rapido', vars); }
+      else if (pace > 0) { cls = 'warn'; text = I18N.t('client.livestats.delante_lento', vars); }
+      else               { cls = 'info'; text = I18N.t('client.livestats.delante_igual', vars); }
+    } else if (gap < 0) {
+      if (faster)        { cls = 'info'; text = I18N.t('client.livestats.detras_rapido', vars); }
+      else if (pace > 0) { cls = 'bad';  text = I18N.t('client.livestats.detras_lento', vars); }
+      else               { cls = 'warn'; text = I18N.t('client.livestats.detras_igual', vars); }
+    } else {
+      if (faster)        { cls = 'good'; text = I18N.t('client.livestats.empate_rapido', vars); }
+      else if (pace > 0) { cls = 'bad';  text = I18N.t('client.livestats.empate_lento', vars); }
+      else               { cls = 'info'; text = I18N.t('client.livestats.empate_tecnico'); }
+    }
+    return `<div class="ls-cmp__chip ls-cmp__chip--${cls}"><b>vs ${teamHtml(r.entityName)}:</b> ${text}</div>`;
+  }
+
+  function renderComparison(data) {
+    if (!data) return;
+    populateCompareOptions(data);
+    const me = data.entities.find(e => e.key === myKey);
+    if (!me) { $('lsCmpBox').hidden = true; return; }
+
+    // Rivales seleccionados (1 o 2), sin duplicar ni incluirme.
+    const seen = new Set([myKey]);
+    const rivals = [];
+    for (const k of [$('lsCompare1').value, $('lsCompare2').value]) {
+      if (!k || seen.has(k)) continue;
+      const e = data.entities.find(x => x.key === k);
+      if (e) { rivals.push(e); seen.add(k); }
+    }
+    if (!rivals.length) { $('lsCmpBox').hidden = true; return; }
+    $('lsCmpBox').hidden = false;
+
+    const cols = [me, ...rivals];
+    const cls = i => i === 0 ? 'is-me' : 'is-rv' + i;
+    const avgKey = includeOutliers ? 'avgAll' : 'avgClean';
+
+    let html = '<thead><tr><th></th>' + cols.map((e, i) =>
+      `<th class="${cls(i)}"><div class="ls-cmp2__name">${teamHtml(e.entityName)}</div>` +
+      `<div class="ls-cmp2__sub">C${e.lane != null ? e.lane : '—'} · P${racePosOf(data, e)}</div></th>`
+    ).join('') + '</tr></thead><tbody>';
+    const row = (label, fn) => `<tr><td class="ls-cmp2__lbl">${label}</td>` +
+      cols.map((e, i) => `<td class="${cls(i)}">${fn(e, i)}</td>`).join('') + '</tr>';
+    // En vista proyectada, los valores son de TODA la carrera.
+    const isProj = currentLsView === 'proj';
+    const lapsOf = e => isProj ? (e.raceTotalLaps != null ? e.raceTotalLaps : 0) : e.totalLaps;
+    const bestOf = e => isProj ? e.raceBestMs : e.bestMs;
+    const avgOf  = e => isProj ? (includeOutliers ? e.racePaceAllMs : e.racePaceCleanMs) : e[avgKey];
+    html += row(isProj ? I18N.t('client.livestats.vueltas_carrera') : I18N.t('client.common.vueltas'), e => lapsOf(e));
+    html += row(I18N.t('client.common.mejor'), e => fmtMs(bestOf(e)));
+    html += row(I18N.t('client.common.media'), e => fmtMs(avgOf(e)));
+    html += row(I18N.t('client.livestats.consistencia'), e => {
+      const { pct, stdMs, level } = consOf(e, isProj);
+      if (pct == null) return '—';
+      const de = consDe(stdMs);
+      return `<span class="ls-conscell ${consLevelClass(level)}">` +
+        `<span class="ls-conscell__dot"></span>${pct}%` +
+        (de ? `<span class="ls-conscell__de">${de}</span>` : '') + '</span>';
+    });
+    html += row(I18N.t('client.livestats.ultima'), e => fmtMs(e.lastLapMs));
+    html += row(I18N.t('client.livestats.delta_vueltas'), (e, i) => {
+      if (i === 0) return '—';
+      const d = lapsOf(me) - lapsOf(e);
+      return (d > 0 ? '+' : '') + d;
+    });
+    html += '</tbody>';
+    $('lsCmpTable').innerHTML = html;
+
+    $('lsCmpVerdicts').innerHTML = rivals.map(r => verdictChip(me, r)).join('');
+    renderCmpChart(cols, data);
+  }
+
+  // Gráfica de la comparativa. Tres modos:
+  //  · 'pace'    : tiempo de vuelta (s) vs nº de vuelta — solo vueltas limpias.
+  //  · 'gap'     : ventaja ACUMULADA sobre la media de los comparados (segundos).
+  //  · 'gaplaps' : GAP REAL de vueltas entre los equipos seleccionados, manga a
+  //    manga. El de más vueltas de los seleccionados es la referencia (0); el
+  //    resto en negativo = vueltas por detrás. Si su línea sube hacia 0 recortan
+  //    (te alcanzan); si baja, se alejan. X = manga.
+  let cmpChart = null;
+  let cmpChartMode = 'pace';
+  const CMP_PALETTE = ['#58a6ff', '#f6c90e', '#3fb950', '#ff6b9d'];
+  function renderCmpChart(cols, data) {
+    const canvas = $('lsCmpChart');
+    if (!canvas || typeof Chart === 'undefined') return;
+    const ES_LAP = <%- JSON.stringify(t('client.common.vuelta')) %>;
+    const ES_MANGA = <%- JSON.stringify(t('common.manga')) %>;
+    // En vista "manga" los gráficos usan la MANGA (lapSeries, X = vuelta); en
+    // "proyectada" usan la CARRERA (raceProgress por manga, X = manga).
+    const isProj = currentLsView === 'proj';
+    const rp = data && data.raceProgress;
+    const mangas = (rp && rp.mangas) ? rp.mangas : [];
+    const mk = (e, i, pts, tension) => ({
+      label: teamPlain(e.entityName), data: pts,
+      borderColor: CMP_PALETTE[i % CMP_PALETTE.length], backgroundColor: CMP_PALETTE[i % CMP_PALETTE.length],
+      borderWidth: 2, tension: tension != null ? tension : 0.25, pointRadius: 2, pointHoverRadius: 4, spanGaps: true,
+    });
+    let datasets = [], yTitle = '', xTitle = isProj ? ES_MANGA : ES_LAP;
+
+    if (cmpChartMode === 'pace') {
+      if (isProj) {
+        datasets = cols.map((e, i) => {
+          const avg = (rp && rp.avgByName[e.entityName]) || [];
+          return mk(e, i, mangas.map((mn, k) => ({ x: mn, y: avg[k] != null ? +(avg[k] / 1000).toFixed(3) : null })));
+        });
+        yTitle = <%- JSON.stringify(t('show.tiempo_medio_por_manga_s')) %>;
+      } else {
+        datasets = cols.map((e, i) =>
+          mk(e, i, (e.lapSeries || []).filter(p => p.n > 1 && !p.x).map(p => ({ x: p.n, y: +(p.t / 1000).toFixed(3) }))));
+        yTitle = <%- JSON.stringify(t('show.tiempo_s')) %>;
+      }
+    } else if (cmpChartMode === 'gap') {
+      if (isProj) {
+        const refs = cols.map(e => e.racePaceCleanMs).filter(v => v != null);
+        const ref = refs.length ? refs.reduce((a, b) => a + b, 0) / refs.length : 0;
+        datasets = cols.map((e, i) => {
+          const cumL = (rp && rp.byName[e.entityName]) || [];
+          const avg  = (rp && rp.avgByName[e.entityName]) || [];
+          let cum = 0;
+          const pts = mangas.map((mn, k) => {
+            const mLaps = k === 0 ? (cumL[0] || 0) : ((cumL[k] || 0) - (cumL[k - 1] || 0));
+            if (avg[k] != null && mLaps > 0) cum += (ref - avg[k]) * mLaps / 1000;
+            return { x: mn, y: +cum.toFixed(2) };
+          });
+          return mk(e, i, pts, 0.2);
+        });
+        yTitle = <%- JSON.stringify(t('show.ventaja_sobre_la_media_s')) %>;
+      } else {
+        let sum = 0, cnt = 0;
+        cols.forEach(e => (e.lapSeries || []).forEach(p => { if (p.n > 1 && !p.x) { sum += p.t; cnt++; } }));
+        const ref = cnt ? sum / cnt : 0;
+        datasets = cols.map((e, i) => {
+          const series = (e.lapSeries || []).filter(p => p.n > 1).slice().sort((a, b) => a.n - b.n);
+          let cum = 0;
+          return mk(e, i, series.map(p => { cum += (ref - p.t) / 1000; return { x: p.n, y: +cum.toFixed(3) }; }));
+        });
+        yTitle = <%- JSON.stringify(t('show.ventaja_sobre_la_media_s')) %>;
+      }
+    } else { // gaplaps
+      if (isProj) {
+        if (!mangas.length) { datasets = []; }
+        else {
+          const finalOf = e => { const a = rp.byName[e.entityName]; return (a && a.length) ? a[a.length - 1] : 0; };
+          const leader = cols.reduce((b, e) => finalOf(e) > finalOf(b) ? e : b, cols[0]);
+          const leaderArr = rp.byName[leader.entityName] || [];
+          datasets = cols.map((e, i) => {
+            const arr = rp.byName[e.entityName] || [];
+            return mk(e, i, mangas.map((mn, k) => ({ x: mn, y: (arr[k] != null && leaderArr[k] != null) ? (arr[k] - leaderArr[k]) : null })), 0.2);
+          });
+        }
+        yTitle = <%- JSON.stringify(t('show.gap_de_vueltas_al_lider_seleccionado')) %>;
+      } else {
+        // Gap REAL de vueltas DENTRO de la manga: en cada momento (minuto) de la
+        // manga, cuántas vueltas lleva cada equipo respecto al líder seleccionado
+        // (el de más vueltas en la manga = línea 0). Se reconstruye el elapsed de
+        // cada vuelta sumando los tiempos de lapSeries.
+        const ceOf = e => { const s = (e.lapSeries || []).slice().sort((a, b) => a.n - b.n); let c = 0; return s.map(p => { c += p.t; return { n: p.n, e: c }; }); };
+        const ceByName = {}; cols.forEach(e => { ceByName[e.entityName] = ceOf(e); });
+        const leader = cols.reduce((b, e) => (e.totalLaps || 0) > (b.totalLaps || 0) ? e : b, cols[0]);
+        const leaderCE = ceByName[leader.entityName] || [];
+        const lapsAt = (ce, T) => { let n = 0; for (let k = 0; k < ce.length; k++) { if (ce[k].e <= T) n = ce[k].n; else break; } return n; };
+        datasets = cols.map((e, i) => {
+          const ce = ceByName[e.entityName] || [];
+          return mk(e, i, leaderCE.map(lp => ({ x: +(lp.e / 60000).toFixed(2), y: lapsAt(ce, lp.e) - lp.n })), 0.2);
+        });
+        xTitle = <%- JSON.stringify(t('show.minutos_manga')) %>;
+        yTitle = <%- JSON.stringify(t('show.gap_de_vueltas_manga')) %>;
+      }
+    }
+    if (!cmpChart) {
+      cmpChart = new Chart(canvas, {
+        type: 'line',
+        data: { datasets },
+        options: {
+          responsive: true, maintainAspectRatio: false, animation: false,
+          interaction: { mode: 'nearest', intersect: false },
+          scales: {
+            x: { type: 'linear', title: { display: true, text: xTitle, color: '#8b949e' },
+                 ticks: { stepSize: 1, precision: 0, color: '#8b949e' }, grid: { color: '#21262d' } },
+            y: { title: { display: true, text: yTitle, color: '#8b949e' },
+                 ticks: { color: '#8b949e' }, grid: { color: '#21262d' } },
+          },
+          plugins: { legend: { labels: { color: '#e6edf3', usePointStyle: true } } },
+        },
+      });
+    } else {
+      cmpChart.data.datasets = datasets;
+      cmpChart.options.scales.x.title.text = xTitle;
+      cmpChart.options.scales.y.title.text = yTitle;
+      cmpChart.update();
+    }
+  }
+
+  // Conmutador de alcance de la consistencia (sin/con salidas y pits). Global:
+  // re-renderiza "Mi panel" y la fila de la comparativa con el set elegido.
+  function updateConsHint() {
+    const el = $('lsConsHint');
+    if (el) el.textContent = consScope === 'all'
+      ? (I18N.t('client.show.incluye_salidas_y_paradas'))
+      : (I18N.t('client.show.solo_vueltas_limpias'));
+  }
+  document.querySelectorAll('#lsConsModes .ls-cmode').forEach(btn => {
+    btn.classList.toggle('is-active', btn.dataset.consscope === consScope);
+    btn.addEventListener('click', () => {
+      consScope = btn.dataset.consscope;
+      try { localStorage.setItem('ls-cons-scope', consScope); } catch (e) {}
+      document.querySelectorAll('#lsConsModes .ls-cmode')
+        .forEach(b => b.classList.toggle('is-active', b === btn));
+      updateConsHint();
+      if (latestData) render(latestData);
+    });
+  });
+  updateConsHint();
+
+  // Conmutador de modo de la gráfica de la comparativa.
+  document.querySelectorAll('#lsCmpModes .ls-cmode').forEach(btn => {
+    btn.addEventListener('click', () => {
+      cmpChartMode = btn.dataset.cmode;
+      document.querySelectorAll('#lsCmpModes .ls-cmode').forEach(b => b.classList.toggle('is-active', b === btn));
+      if (typeof latestData !== 'undefined' && latestData) renderComparison(latestData);
+    });
+  });
+
+  // ── Pestañas de vista: manga actual / proyectada / por carril ───────────
+  const LS_VIEW_KEY = 'ls_view_' + RACE_ID;
+  const lsWrap = document.querySelector('.ls-wrap');
+  function applyLsView(v) {
+    if (!lsWrap) return;
+    currentLsView = v;
+    lsWrap.classList.remove('ls-view-manga', 'ls-view-proj', 'ls-view-carril');
+    lsWrap.classList.add('ls-view-' + v);
+    document.querySelectorAll('#lsTabs .ls-tab').forEach(b => b.classList.toggle('is-active', b.dataset.lstab === v));
+    try { localStorage.setItem(LS_VIEW_KEY, v); } catch (e) {}
+    // Re-render: "Mi panel" y la comparativa (incl. la gráfica, que cambia de
+    // fuente de datos según la vista) se actualizan al cambiar de pestaña.
+    if (typeof latestData !== 'undefined' && latestData) render(latestData);
+    // Reajustar la gráfica (pudo crearse oculta = 0px) en manga/proyectada.
+    if ((v === 'manga' || v === 'proj') && cmpChart) setTimeout(() => { try { cmpChart.resize(); } catch (e) {} }, 30);
+  }
+  document.querySelectorAll('#lsTabs .ls-tab').forEach(b =>
+    b.addEventListener('click', () => applyLsView(b.dataset.lstab)));
+  (function () {
+    let v = 'manga';
+    try { v = localStorage.getItem(LS_VIEW_KEY) || 'manga'; } catch (e) {}
+    applyLsView(v);
+  })();
+
+  // ── Events ────────────────────────────────────────────────────────────
+  $('lsManga').addEventListener('change', () => {
+    MANGA_ID = parseInt($('lsManga').value, 10);
+    fetchData();
+  });
+  $('lsEntity').addEventListener('change', () => {
+    myKey = $('lsEntity').value;
+    localStorage.setItem('ls_entity_' + RACE_ID, myKey);
+    fetchData();
+  });
+  // Cambiar rival no requiere refetch: los datos ya están en latestData.
+  $('lsCompare1').addEventListener('change', () => {
+    localStorage.setItem('ls_cmp1_' + RACE_ID, $('lsCompare1').value);
+    renderComparison(latestData);
+  });
+  $('lsCompare2').addEventListener('change', () => {
+    localStorage.setItem('ls_cmp2_' + RACE_ID, $('lsCompare2').value);
+    renderComparison(latestData);
+  });
+  $('lsIncludeOutliers').addEventListener('change', () => {
+    includeOutliers = $('lsIncludeOutliers').checked;
+    localStorage.setItem('ls_include_outliers', includeOutliers ? '1' : '0');
+    fetchData();
+  });
+  $('lsAuto').addEventListener('click', () => {
+    if (!latestData || !myKey) return;
+    const me = latestData.entities.find(e => e.key === myKey);
+    if (!me) return;
+    // Vecinos por CLASIFICACIÓN de la vista actual (manga o proyectada), NO por
+    // carril: el más cercano por arriba → Rival 1, el más cercano por abajo →
+    // Rival 2. Se ordena por racePosOf (la misma posición que se ve en pantalla).
+    const withPos = latestData.entities
+      .map(e => ({ e, p: racePosOf(latestData, e) }))
+      .filter(x => x.p != null)
+      .sort((a, b) => a.p - b.p);
+    const idx = withPos.findIndex(x => x.e.key === myKey);
+    if (idx === -1) return;
+    const ahead  = idx > 0                  ? withPos[idx - 1].e : null;
+    const behind = idx < withPos.length - 1 ? withPos[idx + 1].e : null;
+    const setSel = (id, lk, ent) => {
+      $(id).value = ent ? ent.key : '';
+      if (ent) localStorage.setItem(lk + RACE_ID, ent.key);
+      else localStorage.removeItem(lk + RACE_ID);
+    };
+    // Arriba→Rival 1, Abajo→Rival 2. Si solo hay uno (P1 o último), va a Rival 1.
+    if (ahead && behind) {
+      setSel('lsCompare1', 'ls_cmp1_', ahead);
+      setSel('lsCompare2', 'ls_cmp2_', behind);
+    } else {
+      setSel('lsCompare1', 'ls_cmp1_', ahead || behind);
+      setSel('lsCompare2', 'ls_cmp2_', null);
+    }
+    renderComparison(latestData);
+  });
+
+  // ── Comparativa por carril ───────────────────────────────────────────────
+  // Datos precalculados en servidor: clave (`tipo_id`) → carril → stats de esa
+  // entidad EN ese carril a lo largo de toda la carrera. "—" si no hay datos.
+  // `let`, no `const`: se reasignan al refrescar (ver fetchLaneGridData) —
+  // solo al terminar una manga, no en cada vuelta (consulta cara, toda la
+  // carrera — ver el comentario en LiveStatsController._buildLaneGridData).
+  let LANE_MATRIX  = <%- JSON.stringify(typeof laneMatrix !== 'undefined' ? laneMatrix : {}) %>;
+  let ENTITY_NAMES = <%- JSON.stringify(entityRows.reduce(function (o, e) { o[e.entity_type + '_' + e.entity_id] = e.entity_name; return o; }, {})) %>;
+  // Datos SOLO de la cuadrícula por defecto (sin filtros elegidos).
+  let ENTITY_ROWS   = <%- JSON.stringify(entityRows.map(function (e) { return { key: e.entity_type + '_' + e.entity_id, name: e.entity_name, categoria: e.categoria || null }; })) %>;
+
+  // Categoría por NOMBRE de entidad (catálogo del club) — se rehace cada vez
+  // que ENTITY_ROWS cambia. Un solo mapa central en vez de arrastrar el campo
+  // por cada estructura de esta vista (proyección, series, comparativa…), que
+  // ya usan el NOMBRE como clave en decenas de sitios.
+  let CATEGORIA_BY_NAME = {};
+  function rebuildCategoriaMap() {
+    CATEGORIA_BY_NAME = {};
+    (ENTITY_ROWS || []).forEach(e => { if (e.categoria) CATEGORIA_BY_NAME[e.name] = e.categoria; });
+  }
+  rebuildCategoriaMap();
+  // Color determinista por categoría (mismo string → mismo color, sin
+  // coordinación con el resto de paneles/ventanas del directo). Paleta FIJA
+  // (no hue continuo): dos categorías de la MISMA carrera (p.ej. "C1"/"C2")
+  // necesitan verse claramente distintas, y un hash sobre un círculo de
+  // tonos continuo puede acercarlas por casualidad (visto con C1/C2). Con
+  // una paleta corta y curada, cualquier carrera con un puñado de
+  // categorías (lo habitual) sale con colores nítidamente diferentes.
+  const CAT_PALETTE = ['#58a6ff','#f6c90e','#3fb950','#ff6b9d','#ff9800','#ba68c8','#00bcd4','#e63946','#8bc34a','#ce93d8','#4dd0e1','#ffab40'];
+  function catColor(cat) {
+    if (!cat) return null;
+    let h = 0;
+    for (let i = 0; i < cat.length; i++) h = (h * 31 + cat.charCodeAt(i)) >>> 0;
+    return CAT_PALETTE[h % CAT_PALETTE.length];
+  }
+  function teamHtml(name) {
+    const cat = CATEGORIA_BY_NAME[name];
+    return cat ? `${name}<span class="cat-suffix" style="color:${catColor(cat)}"> - ${cat}</span>` : name;
+  }
+  function teamPlain(name) {
+    const cat = CATEGORIA_BY_NAME[name];
+    return cat ? `${name} - ${cat}` : name;
+  }
+
+  let LANES_LIST    = <%- JSON.stringify(typeof lanesList !== 'undefined' ? lanesList : []) %>;
+  let TOTAL_LAPS_BY_KEY = <%- JSON.stringify(typeof totalLapsByKey !== 'undefined' ? totalLapsByKey : {}) %>;
+  // key → carril → [ { mangas:[n], drivers:[…], laps, bestMs, avgAllMs, avgCleanMs, exits, pits }, … ]
+  // Un bloque por MANGA, siempre — si el carril se repite en mangas
+  // consecutivas (lane_repeat) igualmente se pintan separadas (M1 aparte de M2).
+  let LANE_RUNS = <%- JSON.stringify(typeof laneRuns !== 'undefined' ? laneRuns : {}) %>;
+
+  // Refresco de "Comparativa por carril" (cuadrícula Y comparación con
+  // filtros) SOLO cuando termina una manga — ver socket.on('manga:stopped').
+  async function fetchLaneGridData() {
+    try {
+      const res = await fetch(`/races/${RACE_ID}/live-stats/lanes.json`);
+      if (!res.ok) return;
+      const d = await res.json();
+      LANE_MATRIX = d.laneMatrix || {};
+      ENTITY_NAMES = (d.entityRows || []).reduce((o, e) => { o[e.entity_type + '_' + e.entity_id] = e.entity_name; return o; }, {});
+      ENTITY_ROWS = (d.entityRows || []).map(e => ({ key: e.entity_type + '_' + e.entity_id, name: e.entity_name, categoria: e.categoria || null }));
+      rebuildCategoriaMap();
+      LANES_LIST = d.lanesList || [];
+      TOTAL_LAPS_BY_KEY = d.totalLapsByKey || {};
+      LANE_RUNS = d.laneRuns || {};
+      // Decide sola si toca la cuadrícula por defecto o la comparación con
+      // filtros (mira el estado actual de los selects) — cubre los dos casos.
+      renderLaneCompare();
+    } catch (e) { /* red caída: se queda con los datos que tenía */ }
+  }
+
+  function renderLaneCompare() {
+    if (!$('lsLaneBox')) return;
+    const lane = $('lsLane').value;
+    const keys = ['lsLaneE1', 'lsLaneE2', 'lsLaneE3'].map(id => $(id).value).filter(Boolean);
+    const noFilter = !lane || keys.length === 0;
+    if ($('lsLaneGridBox')) $('lsLaneGridBox').hidden = !noFilter;
+    if (noFilter) { $('lsLaneBox').hidden = true; renderLaneGrid(); return; }
+    $('lsLaneBox').hidden = false;
+    const avgKey = ($('lsIncludeOutliers') && $('lsIncludeOutliers').checked) ? 'avgAllMs' : 'avgCleanMs';
+    const cls  = i => i === 0 ? 'is-me' : 'is-rv' + i;
+    const cols = keys.map(k => ({ name: ENTITY_NAMES[k] || k, d: (LANE_MATRIX[k] || {})[lane] || null }));
+    let html = '<thead><tr><th></th>' + cols.map((c, i) =>
+      `<th class="${cls(i)}"><div class="ls-cmp2__name">${teamHtml(c.name)}</div></th>`).join('') + '</tr></thead><tbody>';
+    const row = (label, fn) => `<tr><td class="ls-cmp2__lbl">${label}</td>` +
+      cols.map((c, i) => `<td class="${cls(i)}">${c.d ? fn(c.d) : '—'}</td>`).join('') + '</tr>';
+    html += row(<%- JSON.stringify(t('client.common.mejor')) %>,   d => fmtMs(d.bestMs));
+    html += row(<%- JSON.stringify(t('client.common.media')) %>,    d => fmtMs(d[avgKey]));
+    html += row(<%- JSON.stringify(t('client.common.vueltas')) %>, d => d.laps);
+    html += row(<%- JSON.stringify(t('client.common.salidas')) %>, d => d.exits);
+    html += '</tbody>';
+    $('lsLaneTable').innerHTML = html;
+  }
+  ['lsLane', 'lsLaneE1', 'lsLaneE2', 'lsLaneE3'].forEach(id => {
+    const el = $(id); if (el) el.addEventListener('change', renderLaneCompare);
+  });
+  if ($('lsIncludeOutliers')) $('lsIncludeOutliers').addEventListener('change', renderLaneCompare);
+  if ($('lsLaneClear')) $('lsLaneClear').addEventListener('click', () => {
+    ['lsLane', 'lsLaneE1', 'lsLaneE2', 'lsLaneE3'].forEach(id => { if ($(id)) $(id).value = ''; });
+    renderLaneCompare();
+  });
+
+  // ── Cuadrícula por defecto: equipo/piloto × carril, sin filtros ─────────
+  // Una fila por entidad (equipo o piloto suelto), y un grupo de 6 columnas
+  // por cada carril que haya usado alguna vez: piloto, vueltas, VR, VM,
+  // salidas, pit-stops. La categoría sale del catálogo de equipos del club
+  // (emparejada por nombre en el servidor); las mangas de cada tramo se
+  // muestran como insignias bajo el nombre del piloto.
+  function renderLaneGrid() {
+    const box = $('lsLaneGridBox');
+    if (!box || box.hidden) return;
+    const avgKey = ($('lsIncludeOutliers') && $('lsIncludeOutliers').checked) ? 'avgAllMs' : 'avgCleanMs';
+    const toneOf = i => 'ls-grid-tone-' + (i % 6);
+
+    let thead = '<thead><tr class="ls-grid-lanehead"><th rowspan="2">' +
+      (I18N.t('client.show.equipo_piloto')) + '</th><th rowspan="2">' +
+      (I18N.t('client.common.categoria')) + '</th><th rowspan="2">' +
+      (I18N.t('client.show.vueltas_totales')) + '</th>';
+    LANES_LIST.forEach((ln, i) => { thead += `<th colspan="6" class="${toneOf(i)}">${I18N.t('client.common.carril')} ${ln}</th>`; });
+    thead += '</tr><tr class="ls-grid-subhead">';
+    LANES_LIST.forEach((ln, i) => {
+      const tn = toneOf(i);
+      thead += `<th class="${tn}">${I18N.t('client.common.piloto')}</th><th class="${tn}">${I18N.t('client.common.vueltas')}</th>` +
+               `<th class="${tn}">VR</th><th class="${tn}">VM</th>` +
+               `<th class="${tn}">${I18N.t('client.common.salidas')}</th><th class="${tn}">${I18N.t('client.show.pit_stops')}</th>`;
+    });
+    thead += '</tr></thead>';
+
+    // Mayor a menor por vueltas totales (empate → orden alfabético de servidor).
+    const sortedRows = ENTITY_ROWS.slice().sort((a, b) =>
+      (TOTAL_LAPS_BY_KEY[b.key] || 0) - (TOTAL_LAPS_BY_KEY[a.key] || 0));
+
+    let tbody = '<tbody>';
+    sortedRows.forEach(e => {
+      const totalLaps = TOTAL_LAPS_BY_KEY[e.key] || 0;
+      tbody += '<tr>' +
+        `<td class="ls-grid-team">${teamHtml(e.name)}</td>` +
+        `<td class="ls-grid-cat">${e.categoria ? `<span class="ls-grid-catbadge" style="border-color:${catColor(e.categoria)};color:${catColor(e.categoria)}">${e.categoria}</span>` : '<span class="ls-grid-empty">—</span>'}</td>` +
+        `<td class="ls-grid-total">${totalLaps}</td>`;
+      LANES_LIST.forEach((ln, i) => {
+        const tn = toneOf(i);
+        const runs = ((LANE_RUNS[e.key] || {})[ln]) || [];
+        if (!runs.length) {
+          tbody += `<td class="ls-grid-empty ${tn}">—</td>`.repeat(6);
+          return;
+        }
+        // Una manga = un bloque. Si hay más de una en este carril, se apilan
+        // separadas dentro de la misma celda con una línea divisoria — nunca
+        // se mezclan M1 y M2 en un solo número.
+        const multi = runs.length > 1;
+        const stackCls = multi ? ' ls-grid-stack' : '';
+        const wrap = html => `<div class="ls-grid-runs${stackCls}">${html}</div>`;
+        const block = fn => runs.map((r, ri) =>
+          `<div class="ls-grid-run${ri > 0 ? ' ls-grid-run--sep' : ''}">${fn(r)}</div>`).join('');
+
+        const driverLabel = r => r.drivers.length ? r.drivers.join(', ') : e.name;
+        const mangaBadges = r => `<div class="ls-grid-mangas">${r.mangas.map(n => `<span class="ls-grid-manga-badge">M${n}</span>`).join('')}</div>`;
+
+        tbody += `<td class="${tn}">${wrap(block(r => `<div class="ls-grid-driver">${driverLabel(r)}</div>${mangaBadges(r)}`))}</td>` +
+          `<td class="${tn}">${wrap(block(r => r.laps))}</td>` +
+          `<td class="${tn}">${wrap(block(r => fmtMs(r.bestMs)))}</td>` +
+          `<td class="${tn}">${wrap(block(r => fmtMs(r[avgKey])))}</td>` +
+          `<td class="${tn}">${wrap(block(r => r.exits))}</td>` +
+          `<td class="${tn}">${wrap(block(r => r.pits))}</td>`;
+      });
+      tbody += '</tr>';
+    });
+    tbody += '</tbody>';
+
+    $('lsLaneGridTable').innerHTML = thead + tbody;
+    if ($('lsGridScrollTopInner') && $('lsGridScrollBottom')) {
+      $('lsGridScrollTopInner').style.width = $('lsGridScrollBottom').scrollWidth + 'px';
+    }
+  }
+  // Scroll horizontal reflejado arriba y abajo de la cuadrícula: una barra fina
+  // encima de la tabla, sincronizada con la de debajo (nativa del wrap ancho).
+  (function setupGridScrollSync() {
+    const top = $('lsGridScrollTop'), bottom = $('lsGridScrollBottom');
+    if (!top || !bottom) return;
+    let syncing = false;
+    top.addEventListener('scroll', () => { if (syncing) return; syncing = true; bottom.scrollLeft = top.scrollLeft; syncing = false; });
+    bottom.addEventListener('scroll', () => { if (syncing) return; syncing = true; top.scrollLeft = bottom.scrollLeft; syncing = false; });
+  })();
+  renderLaneGrid();
+
+  // ── Initial + socket live updates ─────────────────────────────────────
+  fetchData();
+
+  // Refresh clock every second locally. Con la manga en pausa el reloj real
+  // está congelado en el servidor: si seguimos descontando aquí, el contador
+  // sigue bajando en vacío mientras no se corre ni una vuelta.
+  let racePaused = false;
+  setInterval(() => {
+    if (!racePaused && latestData?.isActive && latestData.remainingMs != null) {
+      latestData.remainingMs = Math.max(0, latestData.remainingMs - 1000);
+      $('lsClockRemaining').textContent = fmtElapsed(latestData.remainingMs);
+    }
+  }, 1000);
+
+  // Refresh data when laps/standings arrive
+  // (query view=livestats → el gate de acceso permite este socket aunque sea
+  //  una IP externa: las estadísticas en vivo son públicas.)
+  const socket = io({ query: { view: 'livestats' } });
+  socket.on('standings', scheduleFetch);   // ~2-3/s en resistencia → con rebote
+  socket.on('lap', scheduleFetch);         // idem, y llega junto al de arriba
+  socket.on('manga:started', fetchData);   // raro: sin rebote, cuanto antes mejor
+  socket.on('manga:stopped', fetchData);
+  socket.on('manga:stopped', fetchLaneGridData);
+  socket.on('manga:paused', () => { racePaused = true; });
+  socket.on('manga:resumed', () => { racePaused = false; fetchData(); });
+  // Cambio de neumático: refresca cuanto antes el 🛞 de la columna Salidas.
+  socket.on('tires:changed', (d) => { if (!d || d.raceId === <%= race.id %>) fetchData(); });
+  <% if (typeof lanesList === 'undefined' || !lanesList.length) { %>
+  // La carrera todavía no ha corrido ni una vuelta: la sección "Comparativa
+  // por carril" ni siquiera está en el DOM (gateada arriba en el render,
+  // porque necesita al menos un carril con datos). fetchData()/scheduleFetch
+  // ya refrescan el resto de pestañas al vuelo, pero esa sección solo puede
+  // aparecer con un render nuevo del servidor — así que en el primer GO de la
+  // carrera recargamos UNA vez para que ya salga completa.
+  socket.once('manga:started', () => location.reload());
+  <% } %>
+</script>
+
+<%- include('../partials/footer') %>

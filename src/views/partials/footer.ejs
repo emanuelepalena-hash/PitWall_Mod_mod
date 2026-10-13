@@ -1,0 +1,95 @@
+  </main>
+  <footer class="footer footer--status">
+
+    <!-- Status indicators -->
+    <div class="footer-status">
+      <% if (typeof serialStatus !== 'undefined') { %>
+        <%# Antes contaba `ports` (puertos ABIERTOS), que sigue listando una caja
+            cuyo enlace se ha caído. Ahora manda `circuits[].connected`, y en las
+            páginas con socket.io el script del final del footer lo refresca. %>
+        <% const cs   = serialStatus.circuits || []; %>
+        <% const down = serialStatus.down     || []; %>
+        <a href="/settings" id="footerSerialPill" class="footer-pill footer-pill--serial"
+           title="<%= t('common.estado_de_puertos_serie') %>"
+           data-lang="<%= typeof lang !== 'undefined' ? lang : 'es' %>">
+          <% if (serialStatus.simulating) { %>
+            <span class="status-dot status-dot--sim"></span><%= t('client.common.simulacion') %>
+          <% } else if (cs.length > 0 && down.length > 0) { %>
+            <span class="status-dot status-dot--off"></span>
+            <%= serialStatus.label || 'DS-300' %> ×<%= cs.length - down.length %>/<%= cs.length %>
+            <span class="footer-pill__detail">
+              <%= (t('client.common.sin_senal_caja')) + down.join(', ') %>
+            </span>
+          <% } else if (cs.length > 0) { %>
+            <span class="status-dot status-dot--ok"></span>
+            <%= serialStatus.label || 'DS-300' %> ×<%= cs.length %>
+            <span class="footer-pill__detail">
+              <%= cs.map(c => (c.path || '').split('/').pop()).filter(Boolean).join(' · ') %>
+            </span>
+          <% } else { %>
+            <span class="status-dot status-dot--off"></span><%= t('client.common.sin_conexion') %>
+          <% } %>
+        </a>
+      <% } %>
+
+      <%# La lista sale de src/locales/, así que añadir un idioma no se toca aquí.
+          `langUrl` conserva el resto del query string (vista, filtros, orden). %>
+      <div class="footer-langs">
+        <% (typeof langs !== 'undefined' ? langs : ['es', 'en']).forEach(code => { %>
+          <a href="<%= typeof langUrl !== 'undefined' ? langUrl(code) : '?lang=' + code %>"
+             class="lang-btn <%= typeof lang !== 'undefined' && lang === code ? 'active' : '' %>"><%= code.toUpperCase() %></a>
+        <% }) %>
+      </div>
+    </div>
+
+    <!-- Copyright + licencia (AGPLv3). El enlace al código fuente cumple la
+         cláusula §13 de la AGPL: quien usa el software por red puede obtener la
+         fuente correspondiente. -->
+    <div class="footer-info">
+      <span>PitWall &copy; <%= new Date().getFullYear() %> Víctor González Gómez</span>
+      <span class="footer-sep">·</span>
+      <a href="/changelog" class="footer-link" title="<%= typeof lang !== 'undefined' && t('common.historial_de_versiones') %>">v<%= appVersion %></a>
+      <span class="footer-sep">·</span>
+      <a href="/eula" class="footer-link"><%= typeof lang !== 'undefined' && t('common.licencia') %> (AGPLv3)</a>
+      <span class="footer-sep">·</span>
+      <a href="https://github.com/vgonzalezgomez85/PitWall-Manager" class="footer-link" target="_blank" rel="noopener"><%= typeof lang !== 'undefined' && t('common.codigo_fuente') %></a>
+    </div>
+
+  </footer>
+  <script src="/js/app.js"></script>
+  <script>
+  // Refresco en vivo de la píldora de estado serie. Solo en las páginas que ya
+  // cargan socket.io (kiosco de turnos, directo, diagnóstico…); en el resto se
+  // queda con lo pintado en servidor. Importa sobre todo en el kiosco: en una
+  // 24 h el operador está ahí, no en la vista de directo, y hasta ahora una caja
+  // caída no se veía en ninguna de las dos.
+  (function () {
+    if (typeof io === 'undefined') return;
+    const pill = document.getElementById('footerSerialPill');
+    if (!pill) return;
+    const esc = (s) => String(s).replace(/[&<>"]/g, c => ({ '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;' }[c]));
+
+    io().on('serial:status', (data) => {
+      const cs   = data.circuits || [];
+      const down = data.down     || [];
+      let dot, text, detail = '';
+
+      if (data.simulating) {
+        dot = 'sim'; text = I18N.t('client.common.simulacion');
+      } else if (cs.length > 0 && down.length > 0) {
+        dot = 'off'; text = `${data.label || 'DS-300'} ×${cs.length - down.length}/${cs.length}`;
+        detail = (I18N.t('client.common.sin_senal_caja')) + down.join(', ');
+      } else if (cs.length > 0) {
+        dot = 'ok'; text = `${data.label || 'DS-300'} ×${cs.length}`;
+        detail = cs.map(c => (c.path || '').split('/').pop()).filter(Boolean).join(' · ');
+      } else {
+        dot = 'off'; text = I18N.t('client.common.sin_conexion');
+      }
+
+      pill.innerHTML = `<span class="status-dot status-dot--${dot}"></span>${esc(text)}` +
+        (detail ? `<span class="footer-pill__detail">${esc(detail)}</span>` : '');
+    });
+  })();
+  </script>
+</body>
+</html>

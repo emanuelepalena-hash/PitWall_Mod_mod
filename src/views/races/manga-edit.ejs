@@ -1,0 +1,78 @@
+<%- include('../partials/header', { pageTitle: t('manga-edit.editar_manga') }) %>
+<div class="container container--narrow">
+
+  <a href="/races/<%= race.id %>" class="back-link">← <%= t('common.volver_a_la_carrera') %></a>
+  <h1 class="page-title">
+    <%= t('manga-edit.editar_manga') %> <%= manga.number %>
+  </h1>
+  <p class="page-subtitle"><%= race.name %></p>
+
+  <form action="/races/<%= race.id %>/mangas/<%= manga.id %>/edit" method="POST" class="form-card">
+
+    <p class="form-hint" style="margin-bottom:1.25rem">
+      <%= t('manga-edit.reasigna_quien_va_en_cada_carril_y_quien') %>
+    </p>
+
+    <%
+      // Order: active lanes (sorted by lane number) then rest slots (DSC1..DSCn
+      // by alphabetical name for a stable, reproducible order).
+      const activeLanes = lanes.filter(l => !l.is_rest).sort((a, b) => a.lane - b.lane);
+      const restLanes   = lanes.filter(l =>  l.is_rest).sort((a, b) =>
+        ((a.team_name || a.driver_name || '').localeCompare(b.team_name || b.driver_name || '')));
+    %>
+
+    <div style="display:flex;flex-direction:column;gap:.75rem">
+      <% activeLanes.forEach(lane => {
+           const currentId = lane.team_id || lane.driver_id;
+      %>
+        <div style="display:grid;grid-template-columns:3rem 1fr;align-items:center;gap:1rem">
+          <span class="lane-dot" style="background:<%= LANE_COLORS[lane.lane - 1] %>;width:2.2rem;height:2.2rem;font-size:1rem;display:flex;align-items:center;justify-content:center;border-radius:8px;font-weight:700;color:<%= laneInk(LANE_COLORS[lane.lane - 1]) %>">
+            <%= lane.lane %>
+          </span>
+          <select name="assignment[<%= lane.id %>]" class="form-input" style="margin:0">
+            <% participants.forEach(p => { %>
+              <option value="<%= p.id %>" <%= p.id === currentId ? 'selected' : '' %>>
+                <%= p.name %>
+              </option>
+            <% }) %>
+          </select>
+        </div>
+      <% }) %>
+
+      <% if (restLanes.length > 0) { %>
+        <div style="display:flex;align-items:center;gap:.5rem;margin-top:.4rem">
+          <span style="flex:1;height:1px;background:#21262d"></span>
+          <span class="form-hint" style="font-size:.75rem;letter-spacing:.08em">💤 <%= t('manga-edit.descansos') %></span>
+          <span style="flex:1;height:1px;background:#21262d"></span>
+        </div>
+        <% restLanes.forEach((lane, idx) => {
+             const currentId = lane.team_id || lane.driver_id;
+        %>
+          <div style="display:grid;grid-template-columns:3rem 1fr;align-items:center;gap:1rem">
+            <span class="lane-dot" style="background:#30363d;color:#8b949e;width:2.2rem;height:2.2rem;font-size:.7rem;display:flex;align-items:center;justify-content:center;border-radius:8px;font-weight:700">
+              DSC<%= idx + 1 %>
+            </span>
+            <select name="assignment[<%= lane.id %>]" class="form-input" style="margin:0">
+              <% participants.forEach(p => { %>
+                <option value="<%= p.id %>" <%= p.id === currentId ? 'selected' : '' %>>
+                  <%= p.name %>
+                </option>
+              <% }) %>
+            </select>
+          </div>
+        <% }) %>
+      <% } %>
+    </div>
+
+    <div class="form-actions" style="margin-top:1.5rem">
+      <a href="/races/<%= race.id %>" class="btn btn--ghost">
+        <%= t('client.common.cancelar') %>
+      </a>
+      <button type="submit" class="btn btn--primary">
+        <%= t('common.guardar_cambios') %>
+      </button>
+    </div>
+
+  </form>
+</div>
+<%- include('../partials/footer') %>

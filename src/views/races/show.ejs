@@ -1,0 +1,407 @@
+<%
+const statusLabel = { pending: t('races.status.pending'), active: t('races.status.active'), finished: t('races.status.completed') }[race.status] || race.status;
+const isFinished = race.status === 'finished';
+const polDone    = race.has_pole && poleSession && poleSession.status === 'done';
+// Estado del stepper (3 nodos): Pole → Tandas → Resultados
+function stepState(idx) {
+  if (idx === 0) {
+    if (!race.has_pole)               return 'skipped';
+    if (polDone)                      return 'done';
+    if (poleSession && poleSession.status !== 'setup') return 'current';
+    return 'current';
+  }
+  if (idx === 1) {
+    if (race.has_pole && !polDone)    return 'locked';
+    if (isFinished)                   return 'done';
+    return tandas.length > 0 ? 'current' : 'current';
+  }
+  if (idx === 2) {
+    return isFinished ? 'current' : 'locked';
+  }
+  return 'locked';
+}
+%>
+<%- include('../partials/header', { pageTitle: race.name }) %>
+
+<link rel="stylesheet" href="/css/fonts.css">
+
+<div class="race-show">
+<div class="race-show__wrap">
+
+  <a class="vt-back-link" href="/races">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M19 12H5M12 19l-7-7 7-7"/></svg>
+    <%= t('race.back_to_list') %>
+  </a>
+
+  <% if (typeof flash !== 'undefined' && flash) { %>
+    <div class="flash flash--<%= flash.type %>" style="margin:0 0 1rem"><%= flash.text %></div>
+  <% } %>
+
+  <!-- ── Cabecera ──────────────────────────────────────────────────── -->
+  <div class="rs-head">
+    <div>
+      <div class="rs-title-line">
+        <h1 class="rs-h1"><%= race.name %></h1>
+        <span class="rs-state rs-state--<%= race.status %>">
+          <span class="rs-state__d"></span> <%= statusLabel %>
+        </span>
+        <details class="rs-stmenu">
+          <summary class="rs-stmenu__btn" title="<%= t('show.cambiar_el_estado_de_la_carrera') %>">
+            <%= t('show.cambiar_estado') %>
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 9l6 6 6-6"/></svg>
+          </summary>
+          <form class="rs-stmenu__pop" action="/races/<%= race.id %>/status" method="POST">
+            <% [['pending', t('common.pendiente'), t('show.aun_no_ha_empezado')],
+                ['active', t('common.en_curso'), t('show.sale_en_el_inicio_y_recibe_el_go')],
+                ['finished', t('show.completada'), t('show.pasa_a_resultados')]].forEach(function (o) { %>
+              <button type="submit" name="status" value="<%= o[0] %>" class="rs-stmenu__opt<%= race.status === o[0] ? ' is-current' : '' %>" <%= race.status === o[0] ? 'disabled' : '' %>>
+                <span class="rs-state rs-state--<%= o[0] %>"><span class="rs-state__d"></span> <%= o[1] %></span>
+                <span class="rs-stmenu__d"><%= o[2] %></span>
+              </button>
+            <% }) %>
+          </form>
+        </details>
+      </div>
+      <div class="rs-meta">
+        <span><span class="rs-ic">🏁</span> <%= t('races.type.' + race.type) %></span>
+        <span><span class="rs-ic">🏎️</span> <%= t('races.format.' + race.format) %></span>
+        <span><span class="rs-ic">🛣️</span> <%= race.lanes_count %> <%= t('races.lanes') %></span>
+        <span><span class="rs-ic">⏱️</span> <%= race.manga_duration_minutes %> min</span>
+      </div>
+    </div>
+
+    <div class="rs-actions">
+      <a href="/races/<%= race.id %>/results" class="rs-btn rs-btn--ghost">
+        <span>📊</span> <%= t('common.resultados') %>
+      </a>
+      <% if (typeof isSim !== 'undefined' && isSim) { %>
+        <a href="/races/<%= race.id %>/sim" class="rs-btn rs-btn--ghost">
+          <span>🎬</span> <%= t('client.common.simulacion') %>
+        </a>
+      <% } %>
+      <% if (race.type === 'championship') { %>
+        <a href="/races/<%= race.id %>/shifts" class="rs-btn rs-btn--ghost">
+          <span>🪪</span> <%= t('common.turnos_2') %>
+        </a>
+      <% } %>
+      <% if (race.type === 'championship' && race.tire_pairs_per_team > 0) { %>
+        <a href="/races/<%= race.id %>/tires" class="rs-btn rs-btn--ghost">
+          <span>🛞</span> <%= t('common.neumaticos') %>
+        </a>
+      <% } %>
+      <% if (race.format === 'team') { %>
+        <a href="/lap/<%= race.id %>/pins" class="rs-btn rs-btn--ghost">
+          <span>🔑</span> <%= t('show.pines_lap') %>
+        </a>
+      <% } %>
+      <% if (typeof verificationsCount !== 'undefined' && verificationsCount > 0) { %>
+        <a href="/races/<%= race.id %>/verificaciones" class="rs-btn rs-btn--ghost">
+          <span>🔍</span> <%= t('common.verificaciones') %>
+        </a>
+      <% } %>
+      <a href="/races/<%= race.id %>/events" class="rs-btn rs-btn--ghost">
+        <span>🗒️</span> <%= t('show.sucesos') %>
+      </a>
+      <% if (!isFinished) { %>
+        <form action="/races/<%= race.id %>/complete" method="POST" style="display:inline"
+              onsubmit="return confirm('<%= t('show.marcar_carrera_como_completada') %>')">
+          <button type="submit" class="rs-btn rs-btn--ghost rs-btn--ok">
+            <span>✅</span> <%= t('show.completar_carrera') %>
+          </button>
+        </form>
+        <a href="/races/<%= race.id %>/tandas/new" class="rs-btn rs-btn--primary">
+          <span>+</span> <%= t('show.nueva_tanda') %>
+        </a>
+      <% } %>
+      <div class="rs-menu-wrap">
+        <button class="rs-btn rs-btn--icon" id="rsMenuBtn" aria-label="<%= t('common.mas_opciones') %>" type="button">⋯</button>
+        <div class="rs-menu" id="rsMenu" role="menu">
+          <button onclick="location.href='/races/<%= race.id %>/edit'" type="button">
+            <span>✏️</span> <%= t('common.editar_carrera') %>
+          </button>
+          <% if (typeof catalogSyncEligible !== 'undefined' && catalogSyncEligible) { %>
+            <button onclick="location.href='/catalog-sync?race=<%= race.id %>'" type="button">
+              <span>🔄</span> <%= t('show.actualizar_desde_catalogo') %>
+            </button>
+          <% } %>
+          <div class="rs-menu__sep"></div>
+          <form action="/races/<%= race.id %>?_method=DELETE" method="POST"
+                onsubmit="return confirm('<%= t('race.delete_confirm') %>')" style="margin:0">
+            <button type="submit" class="rs-menu__danger">
+              <span>🗑️</span> <%= t('race.delete') %>
+            </button>
+          </form>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ── Estructura: stepper + secuencia de carriles ────────────────── -->
+  <section class="rs-card rs-struct">
+    <div class="rs-lbl"><%= t('show.estructura_de_la_carrera') %></div>
+
+    <%
+      const steps = [
+        { state: stepState(0), title: race.has_pole ? (t('show.pole_position')) : (t('show.sin_pole')),
+          subDone: t('show.completada'),
+          subCurrent: t('common.en_curso_2'),
+          subLocked: t('common.pendiente'),
+          subSkipped: t('show.no_configurada') },
+        { state: stepState(1), title: t('show.tandas'),
+          subDone: tandas.length + (t('show.anadidas')),
+          subCurrent: t('show.proximo_paso_v_anadidas', { v: tandas.length }),
+          subLocked: t('show.tras_la_pole') },
+        { state: stepState(2), title: t('common.resultados'),
+          subDone: t('client.common.disponibles'),
+          subCurrent: t('client.common.disponibles'),
+          subLocked: t('show.al_finalizar') }
+      ];
+    %>
+    <div class="rs-stepper">
+      <% steps.forEach((s, idx) => { %>
+        <div class="rs-step rs-step--<%= s.state %>">
+          <div class="rs-node rs-node--<%= s.state %>">
+            <% if (s.state === 'done') { %>✓
+            <% } else if (s.state === 'skipped') { %>—
+            <% } else if (s.state === 'locked') { %>🔒
+            <% } else { %><%= idx + 1 %><% } %>
+          </div>
+          <div class="rs-step__txt">
+            <div class="rs-step__t"><%= s.title %></div>
+            <div class="rs-step__s">
+              <% if (s.state === 'done')      { %><%= s.subDone %>
+              <% } else if (s.state === 'current') { %><%= s.subCurrent %>
+              <% } else if (s.state === 'skipped') { %><%= s.subSkipped %>
+              <% } else { %><%= s.subLocked %><% } %>
+            </div>
+          </div>
+        </div>
+        <% if (idx < steps.length - 1) { %>
+          <div class="rs-connector <%= s.state === 'done' ? '' : 'rs-connector--dim' %>"></div>
+        <% } %>
+      <% }) %>
+    </div>
+
+    <% if (laneSequence && laneSequence.length > 0) { %>
+      <div class="rs-laneseq">
+        <div class="rs-lbl rs-lbl--inline"><%= t('show.orden_de_rotacion_de_carriles') %></div>
+        <div class="rs-lanes">
+          <% laneSequence.forEach((lane, i) => { %>
+            <% if (lane === 0) { %>
+              <span class="rs-lane rs-lane--rest">DSC</span>
+            <% } else { %>
+              <span class="rs-lane" style="background:<%= LANE_COLORS[lane - 1] %>"><%= lane %></span>
+            <% } %>
+            <% if (i < laneSequence.length - 1) { %><span class="rs-arrow">→</span><% } %>
+          <% }) %>
+        </div>
+      </div>
+    <% } %>
+  </section>
+
+  <!-- ── Fase Pole Position ───────────────────────────────────────── -->
+  <% if (race.has_pole) { %>
+    <div class="rs-phases">
+      <div class="rs-phase rs-phase--pole">
+        <div class="rs-phase__flag" aria-hidden="true"></div>
+        <div class="rs-phase__info">
+          <div class="rs-phase__t"><%= t('show.pole_position') %></div>
+          <div class="rs-phase__s">
+            <% if (!poleSession) { %>
+              <%= t('show.pendiente_sin_sesion_preparada') %>
+            <% } else if (poleSession.status === 'setup') { %>
+              <%= t('show.configuracion_elige_el_carril_y_arranca') %>
+            <% } else if (poleSession.status === 'in_progress' || poleSession.status === 'timing') { %>
+              <%= t('show.sesion_en_curso') %>
+            <% } else { %>
+              ✓ <%= t('show.completada') %>
+            <% } %>
+          </div>
+        </div>
+        <div class="rs-phase__actions">
+          <% if (!poleSession) { %>
+            <span class="rs-phase__hint"><%= t('show.carrera_no_guardada_aun') %></span>
+          <% } else if (poleSession.status === 'setup') { %>
+            <a href="/races/<%= race.id %>/pole/setup" class="rs-btn rs-btn--primary rs-btn--sm">
+              <span>🏁</span> <%= t('show.iniciar_pole') %>
+            </a>
+          <% } else if (poleSession.status === 'in_progress' || poleSession.status === 'timing') { %>
+            <a href="/races/<%= race.id %>/pole/timing" class="rs-btn rs-btn--primary rs-btn--sm">
+              <span>⏱</span> <%= t('show.continuar') %>
+            </a>
+          <% } else { %>
+            <a href="/races/<%= race.id %>/pole/results" class="rs-btn rs-btn--outline rs-btn--sm">
+              <span>📊</span> <%= t('show.ver_clasificacion') %>
+            </a>
+            <a href="/races/<%= race.id %>/pole/lanes" class="rs-btn rs-btn--ghost rs-btn--sm">
+              <span>🚦</span> <%= t('show.asignar_carriles') %>
+            </a>
+          <% } %>
+        </div>
+      </div>
+    </div>
+  <% } %>
+
+  <!-- ── Tandas ──────────────────────────────────────────────────── -->
+  <% if (tandas.length === 0) { %>
+    <div class="rs-empty-zone">
+      <div class="rs-ghost"><div class="rs-ghost__n"></div><div class="rs-ghost__b"></div></div>
+      <div class="rs-ghost"><div class="rs-ghost__n"></div><div class="rs-ghost__b"></div></div>
+      <div class="rs-empty">
+        <div class="rs-empty__car">🏎️</div>
+        <% if (race.has_pole && poleSession && poleSession.status !== 'done') { %>
+          <div class="rs-empty__t"><%= t('show.completa_la_pole_primero') %></div>
+          <div class="rs-empty__s">
+            <%= t('show.tienes_que_terminar_la_sesion_de_pole_position') %>
+          </div>
+          <a href="/races/<%= race.id %>/pole/<%= poleSession.status === 'in_progress' ? 'timing' : 'setup' %>" class="rs-btn rs-btn--primary">
+            <span>🏁</span> <%= t('show.ir_a_pole_position') %>
+          </a>
+        <% } else { %>
+          <div class="rs-empty__t"><%= t('show.aun_no_hay_tandas') %></div>
+          <div class="rs-empty__s">
+            <%= t('show.cada_b_tanda_b_es_una_ronda_donde_los_pilotos') %>
+          </div>
+          <a href="/races/<%= race.id %>/tandas/new" class="rs-btn rs-btn--primary">
+            <span>+</span> <%= t('show.anadir_tanda_1') %>
+          </a>
+        <% } %>
+      </div>
+    </div>
+  <% } else { %>
+    <% tandas.forEach(tanda => { %>
+      <section class="rs-card rs-tanda <%= tanda.status === 'finished' ? 'rs-tanda--collapsed' : '' %>">
+        <div class="rs-tanda__head">
+          <button type="button" class="rs-tanda__left" aria-expanded="<%= tanda.status === 'finished' ? 'false' : 'true' %>">
+            <span class="rs-tanda__chevron" aria-hidden="true">▸</span>
+            <span class="rs-tanda__num"><%= t('common.tanda') %> <%= tanda.number %></span>
+            <span class="rs-state rs-state--<%= tanda.status %>">
+              <%= { pending: t('races.status.pending'), active: t('races.status.active'), finished: t('races.status.finished') }[tanda.status] %>
+            </span>
+            <span class="rs-tanda__hint">
+              <%= tanda.mangas_finished %> / <%= tanda.manga_count %>
+              <%= t('common.mangas') %>
+            </span>
+          </button>
+          <div class="rs-tanda__actions">
+            <% const activeManga = tanda.mangas.find(m => m.status === 'active'); %>
+            <% const nextManga   = tanda.mangas.find(m => m.status === 'pending'); %>
+            <% if (activeManga) { %>
+              <a href="/races/<%= race.id %>/mangas/<%= activeManga.id %>/live" class="rs-btn rs-btn--success rs-btn--sm">
+                <span class="rs-live-dot"></span>
+                <%= t('common.manga') %> <%= activeManga.number %>
+              </a>
+            <% } else if (nextManga) { %>
+              <a href="/races/<%= race.id %>/mangas/<%= nextManga.id %>/live" class="rs-btn rs-btn--success rs-btn--sm">
+                ▶ <%= t('common.manga') %> <%= nextManga.number %>
+              </a>
+            <% } %>
+            <% if (tanda.status !== 'active') { %>
+              <a href="/races/<%= race.id %>/tandas/<%= tanda.id %>/edit" class="rs-btn rs-btn--ghost rs-btn--sm">
+                ✏ <%= t('client.common.editar') %>
+              </a>
+              <form action="/races/<%= race.id %>/tandas/<%= tanda.id %>?_method=DELETE" method="POST"
+                    onsubmit="return confirm('<%= t('show.eliminar_tanda') %>')" style="margin:0">
+                <button type="submit" class="rs-btn rs-btn--danger rs-btn--sm">✕</button>
+              </form>
+            <% } %>
+          </div>
+        </div>
+
+        <div class="rs-tanda__sched" style="overflow-x:auto">
+          <table class="rs-sched">
+            <thead>
+              <tr>
+                <th class="rs-sched__entity"><%= t('common.equipo_piloto') %></th>
+                <% tanda.mangas.forEach(m => { %>
+                  <th class="rs-sched__manga rs-sched__manga--<%= m.status %>">
+                    <% if (m.status === 'finished' || m.status === 'active') { %>
+                      <a href="/races/<%= race.id %>/mangas/<%= m.id %>/live" class="rs-sched__manga-link">
+                        M<%= m.number %>
+                        <% if (m.status === 'active')   { %><span class="rs-live-dot"></span><% } %>
+                        <% if (m.status === 'finished') { %><span class="rs-sched__check">✓</span><% } %>
+                      </a>
+                    <% } else { %>
+                      M<%= m.number %>
+                    <% } %>
+                  </th>
+                <% }) %>
+              </tr>
+            </thead>
+            <tbody>
+              <%
+                const firstManga = tanda.mangas[0];
+                if (firstManga) {
+                  firstManga.lanes.forEach(ml => {
+                    const entityName = ml.team_name || ml.driver_name || '—';
+              %>
+              <tr>
+                <td class="rs-sched__entity">
+                  <% if (ml.team_color) { %>
+                    <span class="rs-sched__dot" style="background:<%= ml.team_color %>"></span>
+                  <% } %>
+                  <%= entityName %>
+                </td>
+                <% tanda.mangas.forEach(m => {
+                     const slot = m.lanes.find(l =>
+                       (ml.team_id   && l.team_id   === ml.team_id) ||
+                       (ml.driver_id && l.driver_id === ml.driver_id)
+                     );
+                     const lane = slot?.lane ?? 0;
+                     const isRest = !slot || slot.is_rest;
+                %>
+                  <td class="rs-sched__lane rs-sched__lane--<%= m.status %> <%= isRest ? 'rs-sched__lane--rest' : '' %>">
+                    <% if (isRest) { %>
+                      <span class="rs-sched__rest">—</span>
+                    <% } else { %>
+                      <span class="rs-sched__lane-chip" style="background:<%= LANE_COLORS[lane - 1] %>"><%= lane %></span>
+                    <% } %>
+                  </td>
+                <% }) %>
+              </tr>
+              <% }); } %>
+            </tbody>
+          </table>
+        </div>
+      </section>
+    <% }) %>
+  <% } %>
+
+</div>
+</div>
+
+<script>
+  document.addEventListener('click', (e) => {
+    document.querySelectorAll('details.rs-stmenu[open]').forEach(d => { if (!d.contains(e.target)) d.open = false; });
+  });
+</script>
+<%- include('../partials/footer') %>
+<script src="/socket.io/socket.io.js"></script>
+<script>
+  // Menú "⋯"
+  (function () {
+    const btn = document.getElementById('rsMenuBtn');
+    const menu = document.getElementById('rsMenu');
+    if (!btn || !menu) return;
+    btn.addEventListener('click', e => { e.stopPropagation(); menu.classList.toggle('rs-menu--open'); });
+    document.addEventListener('click', () => menu.classList.remove('rs-menu--open'));
+    menu.addEventListener('click', e => e.stopPropagation());
+  })();
+
+  // Plegar / desplegar tandas
+  document.querySelectorAll('.rs-tanda__left').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const tanda = btn.closest('.rs-tanda');
+      const collapsed = tanda.classList.toggle('rs-tanda--collapsed');
+      btn.setAttribute('aria-expanded', String(!collapsed));
+    });
+  });
+
+  // Auto-navegar a live cuando arranca una manga
+  const _raceId = <%= race.id %>;
+  const socket  = io();
+  socket.on('manga:started', (data) => {
+    if (data.raceId && data.raceId !== _raceId) return;
+    if (data.mangaId) location.href = `/races/${_raceId}/mangas/${data.mangaId}/live`;
+  });
+</script>

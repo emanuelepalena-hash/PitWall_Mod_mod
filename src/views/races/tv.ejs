@@ -1,0 +1,107 @@
+<!DOCTYPE html>
+<html lang="<%= lang %>">
+<head>
+  <meta charset="UTF-8">
+<%- include('../partials/i18n-client') %>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title><%= race.name %> — TV — PitWall</title>
+  <link rel="icon" type="image/svg+xml" href="/img/favicon.svg">
+  <link rel="icon" type="image/png" sizes="32x32"  href="/img/favicon-32.png">
+  <link rel="icon" type="image/png" sizes="256x256" href="/img/favicon-256.png">
+  <link rel="apple-touch-icon" sizes="180x180" href="/img/apple-touch-icon.png">
+  <link rel="stylesheet" href="/css/fonts.css">
+  <link rel="stylesheet" href="/css/tv.css">
+</head>
+<body class="tv-body">
+
+  <!-- ── Header ────────────────────────────────────────────────────────────── -->
+  <header class="tv-header">
+    <% const _club = typeof clubBrand === 'function' ? clubBrand() : null; %>
+    <div class="tv-header__brand">
+      <% if (_club && _club.logoUrl) { %><img class="tv-club-logo" src="<%= _club.logoUrl %>" alt=""><% } %>
+      <div class="tv-header__left">
+        <% if (_club && _club.name) { %><div class="tv-club-name"><%= _club.name %></div><% } %>
+        <div class="tv-race-name"><%= race.name %></div>
+        <div class="tv-manga-tag">
+          <% if (tanda) { %><%= t('common.tanda_2') %> <%= tanda.number %> · <% } %>
+          <%= t('common.manga') %> #<%= manga.number %>
+        </div>
+      </div>
+    </div>
+
+    <div class="tv-header__center">
+      <div id="tvTimer" class="tv-timer"><%= String(race.manga_duration_minutes).padStart(2,'0') %>:00</div>
+      <div class="tv-timer-label"><%= t('tv.tiempo_restante') %></div>
+    </div>
+
+    <div class="tv-header__right">
+      <div id="tvStatus" class="tv-status
+        <% if (isActive) { %>tv-status--active
+        <% } else if (manga.status === 'finished') { %>tv-status--finished
+        <% } else { %>tv-status--pending<% } %>">
+        <% if (isActive) { %>
+          <span class="tv-status-dot tv-status-dot--active"></span>
+          <%= t('tv.en_carrera') %>
+        <% } else if (manga.status === 'finished') { %>
+          <%= t('client.common.finalizada') %>
+        <% } else { %>
+          <%= t('tv.en_espera') %>
+        <% } %>
+      </div>
+      <div class="tv-logo">PitWall</div>
+    </div>
+  </header>
+
+  <!-- ── Standings ─────────────────────────────────────────────────────────── -->
+  <div class="tv-standings">
+    <div class="tv-panel-title">
+      <%= t('common.clasificacion_general') %>
+    </div>
+    <table class="tv-table">
+      <thead>
+        <tr>
+          <th style="width:6vw">#</th>
+          <th><%= t('tv.piloto_equipo') %></th>
+          <th class="tv-right" style="width:12vw" title="<%= t('tv.total_vueltas_en_carrera') %>">
+            <%= t('client.common.total') %>
+          </th>
+          <th class="tv-right" style="width:10vw" title="<%= t('tv.vueltas_esta_manga') %>">
+            <%= t('common.manga') %>
+          </th>
+          <th class="tv-right" style="width:12vw"><%= t('client.common.mejor') %></th>
+          <th class="tv-right" style="width:10vw"><%= t('tv.diferencia') %></th>
+        </tr>
+      </thead>
+      <tbody id="tvBody"></tbody>
+    </table>
+  </div>
+
+  <!-- ── Ticker ─────────────────────────────────────────────────────────────── -->
+  <div class="tv-ticker">
+    <span class="tv-ticker-label"><%= t('tv.ultimas') %></span>
+    <div id="tvTicker" class="tv-ticker-items"></div>
+  </div>
+
+  <%
+    const LC = laneColorsFor(race);
+    const tvLanes = lanes.filter(l => !l.is_rest).map(l => ({
+      lane:         l.lane,
+      prevLapCount: prevLapsByLane[l.lane] || 0
+    }));
+  %>
+
+  <script>
+    const TV_DATA = <%- JSON.stringify({
+      mangaId:    manga.id,
+      isActive:   isActive,
+      durationMs: race.manga_duration_minutes * 60 * 1000,
+      standings:  standings,
+      lanes:      tvLanes
+    }) %>;
+    const LANG = "<%= lang %>";
+  </script>
+  <script src="/socket.io/socket.io.js"></script>
+  <script src="/js/reorder-fx.js"></script>
+  <script src="/js/tv.js"></script>
+</body>
+</html>

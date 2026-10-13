@@ -1,0 +1,350 @@
+<%- include('../partials/header', { pageTitle: (t('common.editar_carrera')) }) %>
+<div class="container container--narrow">
+
+  <a class="vt-back-link" href="/races/<%= race.id %>">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M19 12H5M12 19l-7-7 7-7"/></svg>
+    <%= t('common.volver_a_la_carrera') %>
+  </a>
+
+  <h1 class="page-title"><%= t('common.editar_carrera') %></h1>
+
+  <% if (errors.length > 0) { %>
+    <div class="alert alert--error">
+      <% errors.forEach(e => { %><p><%= t('errors.' + e) %></p><% }) %>
+    </div>
+  <% } %>
+
+  <form action="/races/<%= race.id %>/edit" method="POST" class="form-card">
+
+    <!-- Name -->
+    <div class="form-group">
+      <label class="form-label" for="name"><%= t('edit.nombre_de_la_carrera') %></label>
+      <input
+        class="form-input <%= errors.includes('name_required') ? 'form-input--error' : '' %>"
+        type="text" id="name" name="name"
+        value="<%= race.name %>" autocomplete="off" autofocus required>
+    </div>
+
+    <% if (hasLaps && race.circuit_id) { %>
+      <!-- Con vueltas registradas el escenario queda bloqueado -->
+      <div class="form-group">
+        <label class="form-label"><%= t('edit.escenario') %></label>
+        <% const cur = savedCircuits.find(c => c.id === race.circuit_id) || {}; %>
+        <input class="form-input" type="text" style="max-width:22rem" disabled
+               value="<%= cur.name || ('#' + race.circuit_id) %>">
+        <p class="form-hint" style="color:#e0a106;margin-top:.5rem">
+          🔒 <%= t('edit.no_se_puede_cambiar_el_escenario_la_carrera_ya') %>
+        </p>
+      </div>
+    <% } else if (!hasLaps) { %>
+      <!-- Sin vueltas: asignar, cambiar o quitar el escenario -->
+      <div class="form-group">
+        <label class="form-label"><%= t('edit.escenario') %></label>
+        <select id="circuitSelect" name="circuit_id" class="form-input" style="max-width:22rem"
+                onchange="applyCircuit(this.value)">
+          <option value="" <%= !race.circuit_id ? 'selected' : '' %>>
+            <%= t('edit.sin_escenario_configuracion_manual') %>
+          </option>
+          <% savedCircuits.forEach(c => { %>
+            <option value="<%= c.id %>"
+                    data-config="<%= c.circuits_config %>"
+                    data-min-ms="<%= c.min_lap_ms %>"
+                    <%= race.circuit_id == c.id ? 'selected' : '' %>>
+              <%= c.name %> (<%= c.lanes_count %> <%= t('client.common.carriles') %><% if (c.min_lap_ms > 0) { %> · min <%= (c.min_lap_ms/1000).toFixed(2) %>s<% } %>)
+            </option>
+          <% }) %>
+        </select>
+
+        <!-- Category override (shown only if the chosen circuit has per-category times) -->
+        <div id="categoryWrap" style="margin-top:.75rem;display:none;align-items:center;gap:.6rem;flex-wrap:wrap">
+          <span class="form-hint" style="flex-shrink:0"><%= t('edit.categoria') %></span>
+          <select id="categorySelect" name="category_id" class="form-input form-input--sm" style="max-width:14rem">
+            <option value=""><%= t('common.por_defecto') %></option>
+          </select>
+          <span class="form-hint" id="categoryHint" style="color:#9aa0a6"></span>
+        </div>
+
+        <p class="form-hint" id="circuitInfo" style="margin-top:.7rem;display:none">
+          <%= t('edit.carriles') %> <strong id="lanesInfo" style="color:#58a6ff">—</strong>
+          &nbsp;·&nbsp;
+          <%= t('edit.vuelta_minima') %> <strong id="minLapInfo" style="color:#4caf50">—</strong>
+        </p>
+
+        <p class="form-hint" style="color:#e0a106;margin-top:.5rem">
+          ⚠️ <%= t('edit.asignar_o_cambiar_el_escenario_reajusta_el') %>
+        </p>
+      </div>
+    <% } %>
+
+    <% if (!race.circuit_id) { %>
+    <div id="manualConfig">
+      <!-- Manual race: change the minimum lap threshold -->
+      <div class="form-group">
+        <label class="form-label" for="minLapS"><%= t('common.vuelta_minima') %></label>
+        <div style="display:flex;align-items:center;gap:.6rem">
+          <input class="form-input form-input--sm" type="number" id="minLapS" name="min_lap_s"
+                 step="0.01" min="0" max="999" style="width:6rem"
+                 placeholder="<%= t('edit.desactivada') %>"
+                 value="<%= race.min_lap_ms > 0 ? (race.min_lap_ms/1000).toFixed(2) : '' %>">
+          <span class="form-hint">s</span>
+        </div>
+        <p class="form-hint" style="margin-top:.5rem">
+          <%= t('edit.los_cruces_mas_rapidos_que_este_tiempo_se') %>
+        </p>
+      </div>
+
+      <!-- Circuito manual: reordenar la secuencia de carriles -->
+      <div class="form-group">
+        <label class="form-label"><%= t('common.secuencia_de_carriles') %></label>
+        <p class="form-hint" style="margin:.2rem 0 .8rem">
+          <%= t('edit.orden_de_rotacion_de_salida_arrastra_para') %>
+          <% if (restCount > 0) { %>
+            <strong style="color:#8fb6ff">· <%= restCount %> <%= t('edit.descanso_s') %></strong>
+          <% } %>
+        </p>
+        <div id="laneSeqList" class="lane-seq-list">
+          <% (laneSequence || []).forEach(l => { %>
+            <% if (l === 0) { %>
+              <div class="lane-seq-chip lane-seq-chip--rest" draggable="true" data-lane="0"
+                   title="<%= t('client.common.descanso') %>">
+                <span class="lane-seq-grip">⋮⋮</span>💤
+              </div>
+            <% } else { %>
+              <div class="lane-seq-chip" draggable="true" data-lane="<%= l %>"
+                   style="--lane-color: <%= LANE_COLORS[(l - 1) % LANE_COLORS.length] %>">
+                <span class="lane-seq-grip">⋮⋮</span><%= l %>
+              </div>
+            <% } %>
+          <% }) %>
+        </div>
+        <input type="hidden" name="lane_sequence" id="laneSeqInput" value="<%= JSON.stringify(laneSequence || []) %>">
+        <p class="form-hint" style="margin-top:.6rem">
+          ↻ <%= t('edit.las_tandas_pendientes_sin_mangas_corridas_se') %>
+        </p>
+      </div>
+    </div>
+    <% } %>
+
+    <% if (race.type === 'championship') { %>
+      <%
+        // BD en ms/ms; el formulario muestra minutos/segundos (como el asistente).
+        const rMinMin  = race.driver_min_total_ms > 0 ? Math.round(race.driver_min_total_ms / 60000) : '';
+        const rMaxMin  = race.driver_max_total_ms > 0 ? Math.round(race.driver_max_total_ms / 60000) : '';
+        const rMaxRuns = race.driver_max_runs > 0 ? race.driver_max_runs : '';
+        const rLockS   = race.driver_change_lockout_ms != null ? Math.round(race.driver_change_lockout_ms / 1000) : 120;
+        const rPairs   = race.tire_pairs_per_team > 0 ? race.tire_pairs_per_team : '';
+        const lockRules = hasRunManga;
+      %>
+
+      <% if (lockRules) { %>
+        <p class="form-hint" style="color:#e0a106;margin:.2rem 0 1rem">
+          🔒 <%= t('edit.las_reglas_de_turnos_y_los_neumaticos_no_se') %>
+        </p>
+      <% } %>
+
+      <!-- Reglas de turnos por piloto (solo resistencia, antes de correr) -->
+      <div class="form-group">
+        <label class="form-label">
+          <%= t('edit.reglas_de_turnos_por_piloto') %>
+        </label>
+        <p class="form-hint" style="margin:.2rem 0 .8rem">
+          <%= t('edit.cada_piloto_se_identifica_por_qr_el_contador') %>
+        </p>
+        <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:1rem">
+          <div>
+            <label class="form-label" for="driverMinMin" style="font-size:.85rem;color:var(--vt-mute,#9aa0a6)">
+              <%= t('edit.minimo_por_piloto_min') %>
+            </label>
+            <input class="form-input form-input--sm" type="number" id="driverMinMin" name="driver_min_total_min"
+                   min="0" max="600" step="1" placeholder="<%= t('edit.ph_sin_minimo') %>" value="<%= rMinMin %>" <%= lockRules ? 'disabled' : '' %>>
+          </div>
+          <div>
+            <label class="form-label" for="driverMaxMin" style="font-size:.85rem;color:var(--vt-mute,#9aa0a6)">
+              <%= t('edit.maximo_por_piloto_min') %>
+            </label>
+            <input class="form-input form-input--sm" type="number" id="driverMaxMin" name="driver_max_total_min"
+                   min="0" max="600" step="1" placeholder="<%= t('edit.ph_sin_maximo') %>" value="<%= rMaxMin %>" <%= lockRules ? 'disabled' : '' %>>
+          </div>
+          <div>
+            <label class="form-label" for="driverMaxRuns" style="font-size:.85rem;color:var(--vt-mute,#9aa0a6)">
+              <%= t('edit.maximo_de_turnos_por_piloto') %>
+            </label>
+            <input class="form-input form-input--sm" type="number" id="driverMaxRuns" name="driver_max_runs"
+                   min="0" max="100" step="1" placeholder="<%= t('edit.ph_sin_maximo') %>" value="<%= rMaxRuns %>" <%= lockRules ? 'disabled' : '' %>>
+          </div>
+          <div>
+            <label class="form-label" for="lockoutS" style="font-size:.85rem;color:var(--vt-mute,#9aa0a6)">
+              <%= t('edit.bloqueo_final_de_manga_s') %>
+            </label>
+            <input class="form-input form-input--sm" type="number" id="lockoutS" name="driver_change_lockout_s"
+                   min="0" max="600" step="1" value="<%= rLockS %>" <%= lockRules ? 'disabled' : '' %>>
+          </div>
+        </div>
+        <% if (errors.includes('driver_max_below_min')) { %>
+          <p class="form-hint" style="color:#ff6b6b;margin-top:.4rem"><%= t('errors.driver_max_below_min') %></p>
+        <% } %>
+      </div>
+
+      <!-- Neumáticos por equipo (solo resistencia, antes de correr) -->
+      <div class="form-group">
+        <label class="form-label" for="tirePairs">
+          <%= t('common.neumaticos_por_equipo') %>
+        </label>
+        <p class="form-hint" style="margin:.2rem 0 .6rem">
+          <%= t('edit.pares_de_neumaticos_2_ruedas_que_se_suministran') %>
+        </p>
+        <div style="display:flex;align-items:center;gap:.6rem;flex-wrap:wrap">
+          <input class="form-input form-input--sm" type="number" id="tirePairs" name="tire_pairs_per_team"
+                 min="0" max="99" step="1" placeholder="<%= t('edit.0_sin_control') %>"
+                 value="<%= rPairs %>" style="width:6.5rem" <%= lockRules ? 'disabled' : '' %>>
+          <span class="form-hint"><%= t('common.pares_por_equipo') %></span>
+        </div>
+      </div>
+    <% } %>
+
+    <!-- Categoría/copa y coche por participante (opcional, se puede cambiar siempre) -->
+    <div class="form-group">
+      <label class="form-label"><%= t('common.categoria_y_coche_opcional') %></label>
+      <p class="form-hint" style="margin:.2rem 0 .6rem">
+        <%= t('edit.activalos_para_poder_anotar_la_categoria_copa_y') %>
+      </p>
+      <div style="display:flex;gap:1.4rem;flex-wrap:wrap">
+        <label style="display:flex;align-items:center;gap:.5rem;cursor:pointer">
+          <input type="checkbox" name="has_categoria" value="1" <%= race.has_categoria ? 'checked' : '' %>>
+          <span><%= t('common.categoria_copa') %></span>
+        </label>
+        <label style="display:flex;align-items:center;gap:.5rem;cursor:pointer">
+          <input type="checkbox" name="has_coche" value="1" <%= race.has_coche ? 'checked' : '' %>>
+          <span><%= t('common.coche') %></span>
+        </label>
+      </div>
+    </div>
+
+    <div class="form-actions">
+      <a href="/races/<%= race.id %>" class="btn btn--ghost"><%= t('client.common.cancelar') %></a>
+      <button type="submit" class="btn btn--primary"><%= t('common.guardar_cambios') %></button>
+    </div>
+
+  </form>
+</div>
+
+<% if (!hasLaps) { %>
+<script>
+const CIRCUIT_CATEGORY_TIMES = <%- JSON.stringify(circuitCategoryTimes || {}) %>;
+const DISABLED_TXT = <%- JSON.stringify(t('edit.desactivada')) %>;
+const FROM_CAT     = <%- JSON.stringify(t('edit.de_la_categoria')) %>;
+
+const circuitSelect  = document.getElementById('circuitSelect');
+const categoryWrap   = document.getElementById('categoryWrap');
+const categorySelect = document.getElementById('categorySelect');
+const categoryHint   = document.getElementById('categoryHint');
+const lanesInfo      = document.getElementById('lanesInfo');
+const minLapInfo     = document.getElementById('minLapInfo');
+const circuitInfo    = document.getElementById('circuitInfo');
+const manualConfig   = document.getElementById('manualConfig');
+
+function fmtMs(ms) { return ms > 0 ? (ms / 1000).toFixed(2) + 's' : DISABLED_TXT; }
+
+function applyCircuit(id) {
+  // «Sin escenario» → configuración manual visible, sin info de circuito.
+  if (!id) {
+    if (circuitInfo) circuitInfo.style.display = 'none';
+    if (manualConfig) manualConfig.style.display = '';
+    populateCategories(null);
+    return;
+  }
+  if (manualConfig) manualConfig.style.display = 'none';
+  const opt = circuitSelect.querySelector(`option[value="${id}"]`);
+  if (!opt) { if (circuitInfo) circuitInfo.style.display = 'none'; populateCategories(null); return; }
+  let config = [];
+  try { config = JSON.parse(opt.dataset.config || '[]'); } catch {}
+  const total = (Array.isArray(config) ? config : []).reduce((a, b) => a + (parseInt(b, 10) || 0), 0);
+  lanesInfo.textContent  = total || '—';
+  minLapInfo.textContent = fmtMs(parseInt(opt.dataset.minMs, 10) || 0);
+  if (circuitInfo) circuitInfo.style.display = '';
+  populateCategories(id);
+}
+
+function populateCategories(circuitId) {
+  while (categorySelect.options.length > 1) categorySelect.remove(1);
+  const list = circuitId ? (CIRCUIT_CATEGORY_TIMES[circuitId] || []) : [];
+  if (!list.length) { categoryWrap.style.display = 'none'; categoryHint.textContent = ''; return; }
+  for (const cat of list) {
+    const o = document.createElement('option');
+    o.value = cat.category_id;
+    o.textContent = `${cat.category_name} (${(cat.min_lap_ms/1000).toFixed(2)}s)`;
+    o.dataset.minMs = cat.min_lap_ms;
+    categorySelect.appendChild(o);
+  }
+  categoryWrap.style.display = 'flex';
+  applyCategory();
+}
+
+function applyCategory() {
+  const opt = categorySelect.selectedOptions[0];
+  if (opt && opt.value) {
+    minLapInfo.textContent = fmtMs(parseInt(opt.dataset.minMs, 10) || 0);
+    categoryHint.textContent = FROM_CAT;
+  } else {
+    const cOpt = circuitSelect.selectedOptions[0];
+    minLapInfo.textContent = fmtMs(cOpt ? (parseInt(cOpt.dataset.minMs, 10) || 0) : 0);
+    categoryHint.textContent = '';
+  }
+}
+
+categorySelect.addEventListener('change', applyCategory);
+applyCircuit(circuitSelect.value);
+</script>
+<% } %>
+
+<% if (!race.circuit_id) { %>
+<style>
+.lane-seq-list { display: flex; flex-wrap: wrap; gap: 8px; }
+.lane-seq-chip {
+  display: inline-flex; align-items: center; gap: 4px;
+  min-width: 46px; justify-content: center;
+  padding: 8px 10px; border-radius: 9px; cursor: grab;
+  background: #000; color: #fff; border: 2px solid var(--lane-color);
+  font-family: 'IBM Plex Mono', monospace; font-weight: 700; font-size: 15px;
+  user-select: none; transition: transform .1s, box-shadow .12s;
+}
+.lane-seq-chip:hover { box-shadow: 0 6px 16px -8px var(--lane-color); }
+.lane-seq-chip:active { cursor: grabbing; }
+.lane-seq-chip.is-dragging { opacity: .4; }
+.lane-seq-grip { opacity: .45; font-size: 11px; letter-spacing: -3px; }
+.lane-seq-chip--rest { --lane-color: #3a86ff; border-style: dashed; }
+</style>
+<script>
+(function () {
+  const list  = document.getElementById('laneSeqList');
+  const input = document.getElementById('laneSeqInput');
+  if (!list || !input) return;
+  let dragEl = null;
+
+  function syncInput() {
+    const order = [...list.querySelectorAll('.lane-seq-chip')].map(c => parseInt(c.dataset.lane, 10));
+    input.value = JSON.stringify(order);
+  }
+  list.addEventListener('dragstart', e => {
+    const chip = e.target.closest('.lane-seq-chip');
+    if (!chip) return;
+    dragEl = chip; chip.classList.add('is-dragging');
+    e.dataTransfer.effectAllowed = 'move';
+  });
+  list.addEventListener('dragend', () => {
+    if (dragEl) dragEl.classList.remove('is-dragging');
+    dragEl = null; syncInput();
+  });
+  list.addEventListener('dragover', e => {
+    e.preventDefault();
+    const target = e.target.closest('.lane-seq-chip');
+    if (!target || !dragEl || target === dragEl) return;
+    const r = target.getBoundingClientRect();
+    const before = (e.clientX - r.left) < r.width / 2;
+    list.insertBefore(dragEl, before ? target : target.nextSibling);
+  });
+})();
+</script>
+<% } %>
+
+<%- include('../partials/footer') %>

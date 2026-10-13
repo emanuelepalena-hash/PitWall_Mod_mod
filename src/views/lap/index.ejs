@@ -1,0 +1,51 @@
+<%- include('../partials/header', { lang, pageTitle: 'Lap' }) %>
+
+<div class="container container--narrow">
+  <a href="/" class="vt-back-link" style="margin-top:1rem">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M19 12H5M12 19l-7-7 7-7"/></svg>
+    <%= t('common.inicio') %>
+  </a>
+  <div class="page-header">
+    <h1 class="page-title">Lap</h1>
+    <p style="color:#8b949e; margin-top:.3rem">
+      <%= t('lap.elige_tu_carrera_para_seguir_el_timing_de_tu') %>
+    </p>
+  </div>
+
+  <% if (races.length === 0) { %>
+    <div class="ls-nolive">
+      <div class="ls-nolive__icon">🏎️</div>
+      <p class="ls-nolive__title"><%= t('lap.no_hay_carreras_de_resistencia_activas_ahora') %></p>
+    </div>
+  <% } else { %>
+    <div class="ls-race-list">
+      <% races.forEach(r => { %>
+        <a href="/lap/<%= r.id %>" class="ls-race-card">
+          <div class="ls-race-card__name"><%= r.name %></div>
+          <div class="ls-race-card__meta">
+            <% if (r.status === 'active') { %>
+              <span class="ls-race-card__status ls-race-card__status--active"><%= t('lap.en_vivo') %></span>
+            <% } else { %>
+              <span class="ls-race-card__status"><%= r.teamsCount %> <%= t('client.common.equipos') %></span>
+            <% } %>
+          </div>
+        </a>
+      <% }) %>
+    </div>
+  <% } %>
+</div>
+
+<style>
+  .ls-race-list { display:flex; flex-direction:column; gap:.6rem; margin-top:1.2rem }
+  .ls-race-card { display:block; background:#161b22; border:1px solid #30363d; border-radius:10px; padding:.9rem 1.1rem; color:#c9d1d9; text-decoration:none; transition: border-color .15s }
+  .ls-race-card:hover { border-color:#58a6ff; text-decoration:none }
+  .ls-race-card__name { font-weight:600; font-size:1.05rem }
+  .ls-race-card__meta { font-size:.78rem; color:#6e7681; margin-top:.2rem }
+  .ls-race-card__status { display:inline-block; padding:1px 7px; border-radius:9px; font-size:.7rem; font-weight:700; text-transform:uppercase; background:#21262d; color:#8b949e }
+  .ls-race-card__status--active { background:rgba(46,160,67,.18); color:#3fb950 }
+  .ls-nolive { text-align:center; margin-top:2.5rem; color:#8b949e }
+  .ls-nolive__icon { font-size:3rem; opacity:.6 }
+  .ls-nolive__title { color:#e6edf3; font-size:1.15rem; font-weight:600; margin:.8rem 0 .3rem }
+</style>
+
+<%- include('../partials/footer') %>

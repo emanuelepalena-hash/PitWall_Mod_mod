@@ -1,0 +1,250 @@
+<%- include('../partials/header', { pageTitle: (t('database.gestion_de_base_de_datos')) }) %>
+<%
+  function humanSize(bytes) {
+    if (bytes == null) return '—';
+    if (bytes < 1024) return bytes + ' B';
+    const u = ['KB','MB','GB'];
+    let n = bytes / 1024, i = 0;
+    while (n >= 1024 && i < u.length - 1) { n /= 1024; i++; }
+    return n.toFixed(n < 10 ? 1 : 0).replace('.', ',') + ' ' + u[i];
+  }
+  const fmt = n => n == null ? '—' : Number(n).toLocaleString(localeFor(lang));
+  const fmtDate = v => {
+    if (!v) return '';
+    const d = new Date(String(v).replace(' ', 'T') + (/[zZ]|[+-]\d\d:?\d\d$/.test(String(v)) ? '' : 'Z'));
+    return isNaN(d) ? '' : d.toLocaleDateString(localeFor(lang), { day: '2-digit', month: 'short', year: 'numeric' });
+  };
+  const navItems = [
+    { key: 'summary', label: t('database.resumen'), dot: '',
+      icon: '<ellipse cx="12" cy="5.5" rx="7.5" ry="2.5"/><path d="M4.5 5.5v13c0 1.4 3.4 2.5 7.5 2.5s7.5-1.1 7.5-2.5v-13M4.5 12c0 1.4 3.4 2.5 7.5 2.5s7.5-1.1 7.5-2.5"/>' },
+    { key: 'race', label: t('database.exp_imp_carrera'), dot: '',
+      icon: '<path d="M5 21V4M5 4h12l-2.5 4L17 12H5"/>' },
+    { key: 'backup', label: t('database.copia_de_seguridad'), dot: '',
+      icon: '<path d="M12 4v11M7 10l5 5 5-5M5 20h14"/>' },
+    { key: 'restore', label: t('database.restaurar_copia'), dot: pendingRestore ? 'warn' : '',
+      icon: '<path d="M4 12a8 8 0 1 0 2.4-5.7M4 4v4h4"/>' },
+  ];
+  const statusLabel = st => ({ finished: t('database.terminada'), active: t('database.en_curso'), pending: t('common.pendiente_2') }[st] || st);
+  const stats = [
+    { key: 'races',    label: t('common.carreras') },
+    { key: 'teams',    label: t('common.equipos') },
+    { key: 'drivers',  label: t('client.common.pilotos') },
+    { key: 'circuits', label: t('common.circuitos') },
+    { key: 'laps',     label: t('client.common.vueltas') },
+  ];
+%>
+
+<div class="vt-page st-page">
+  <div class="st-top">
+    <a href="/" class="vt-back-link">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M19 12H5M12 19l-7-7 7-7"/></svg>
+      <%= t('common.inicio') %>
+    </a>
+    <span class="st-top__sep"></span>
+    <h1 class="st-top__h"><%= t('common.base_de_datos') %></h1>
+  </div>
+
+  <div class="st-layout">
+      <nav class="st-nav" aria-label="<%= t('common.secciones') %>">
+        <% navItems.forEach(it => { %>
+          <button type="button" class="st-nav__item <%= it.key === 'summary' ? 'is-active' : '' %>" data-sec="<%= it.key %>">
+            <svg viewBox="0 0 24 24"><%- it.icon %></svg>
+            <span class="st-nav__lbl"><%= it.label %></span>
+            <span class="st-dot <%= it.dot ? 'st-dot--' + it.dot : '' %>"></span>
+          </button>
+        <% }) %>
+      </nav>
+
+      <div class="st-main">
+        <section class="st-sec is-active" data-sec="summary">
+          <header class="st-sec__h">
+            <h2><%= t('database.resumen') %></h2>
+            <p><%= t('database.lo_que_hay_ahora_mismo_en_la_base_de_datos_de') %></p>
+          </header>
+        <section class="st-card">
+          <div class="db-stats">
+            <% stats.forEach(s => { %>
+              <div class="db-stat">
+                <div class="db-stat__n"><%= fmt(counts && counts[s.key]) %></div>
+                <div class="db-stat__l"><%= s.label %></div>
+              </div>
+            <% }) %>
+          </div>
+          <div class="st-row st-row--wrap">
+            <div class="st-row__txt">
+              <div class="st-row__t st-row__t--sm"><%= t('database.fichero') %></div>
+              <% if (dbPath) { %><div class="st-row__d db-path"><%= dbPath %></div><% } %>
+            </div>
+            <div class="db-size"><%= humanSize(sizeBytes) %></div>
+          </div>
+        </section>
+        </section>
+
+        <section class="st-sec" data-sec="race">
+          <header class="st-sec__h">
+            <h2><%= t('database.exportar_e_importar_carrera') %></h2>
+            <p><%= t('database.para_llevarte_una_carrera_a_otro_pc_por_ejemplo') %></p>
+          </header>
+        <section class="st-card">
+          <form action="/database/race-export" method="GET" class="st-row st-row--wrap">
+            <div class="db-ico">
+              <svg viewBox="0 0 24 24"><path d="M4 21V4M4 4h11l-2 4 2 4H4"/><path d="M14 17h7M18 14l3 3-3 3"/></svg>
+            </div>
+            <div class="st-row__txt">
+              <div class="st-row__t"><%= t('database.exportar_carrera') %></div>
+              <div class="st-row__d"><%= t('database.genera_un_archivo_pwrace_con_todo_equipos') %></div>
+            </div>
+            <div class="db-export">
+              <div class="vt-selw">
+                <select name="race" required aria-label="<%= t('database.carrera_a_exportar') %>">
+                  <% (races || []).forEach(r => { %>
+                    <option value="<%= r.id %>" <%= r.open_mangas ? 'disabled' : '' %>>
+                      <%= r.name %> · <%= fmtDate(r.at) %> · <%= r.open_mangas ? (t('database.manga_sin_cerrar')) : statusLabel(r.status) %>
+                    </option>
+                  <% }) %>
+                </select>
+              </div>
+              <button type="submit" class="vt-btn vt-btn--primary" <%= (races || []).length ? '' : 'disabled' %>><%= t('database.exportar') %></button>
+            </div>
+          </form>
+        </section>
+
+        <section class="st-card">
+          <form action="/database/race-import" method="POST" enctype="multipart/form-data" class="db-upload db-upload--first">
+            <div class="db-upload__h">
+              <div class="db-ico">
+                <svg viewBox="0 0 24 24"><path d="M4 21V4M4 4h11l-2 4 2 4H4"/><path d="M21 17h-7M17 14l-3 3 3 3"/></svg>
+              </div>
+              <div class="st-row__txt">
+                <div class="st-row__t"><%= t('database.importar_carrera') %></div>
+                <div class="st-row__d"><%= t('database.se_anade_como_carrera_nueva_y_se_aplica_al') %></div>
+              </div>
+            </div>
+            <label class="db-drop">
+              <input type="file" name="race_file" accept=".pwrace" required>
+              <svg viewBox="0 0 24 24"><path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z"/><path d="M14 3v5h5M12 18v-6M9 15l3-3 3 3"/></svg>
+              <span class="db-drop__t"><%= t('database.arrastra_aqui_el_archivo_pwrace_o_pulsa_para') %></span>
+            </label>
+            <div class="db-upload__foot">
+              <button type="submit" class="vt-btn vt-btn--primary"><%= t('database.importar_carrera') %></button>
+            </div>
+          </form>
+        </section>
+        </section>
+
+        <section class="st-sec" data-sec="backup">
+          <header class="st-sec__h">
+            <h2><%= t('database.copia_de_seguridad') %></h2>
+            <p><%= t('database.toda_la_base_de_datos_en_un_archivo_para') %></p>
+          </header>
+        <section class="st-card">
+          <div class="st-row st-row--wrap">
+            <div class="db-ico">
+              <svg viewBox="0 0 24 24"><path d="M12 4v11M7 10l5 5 5-5M5 20h14"/></svg>
+            </div>
+            <div class="st-row__txt">
+              <div class="st-row__t"><%= t('database.copia_de_seguridad') %></div>
+              <div class="st-row__d">
+                <%= t('database.descarga_un_archivo_db_con_todos_los_datos') %>
+              </div>
+            </div>
+            <a href="/database/backup" class="vt-btn vt-btn--primary"><%= t('database.descargar_copia') %></a>
+          </div>
+        </section>
+        </section>
+
+        <section class="st-sec" data-sec="restore">
+          <header class="st-sec__h">
+            <h2><%= t('database.restaurar_copia') %></h2>
+            <p><%= t('database.sustituir_todos_los_datos_de_este_pc_por_los_de') %></p>
+          </header>
+        <section class="st-card">
+          <div class="st-row">
+            <div class="db-ico">
+              <svg viewBox="0 0 24 24"><path d="M12 20V9M7 14l5-5 5 5M5 4h14"/></svg>
+            </div>
+            <div class="st-row__txt">
+              <div class="st-row__t"><%= t('database.importar_copia') %></div>
+              <div class="st-row__d">
+                <%= t('database.sustituye_todos_los_datos_de_este_pc_por_los_de') %>
+              </div>
+            </div>
+          </div>
+
+          <% if (pendingRestore) { %>
+            <div class="st-row st-row--wrap db-pending">
+              <span class="st-dot st-dot--warn st-dot--lg"></span>
+              <div class="st-row__txt">
+                <div class="st-row__t st-row__t--sm"><%= t('database.hay_una_copia_pendiente_de_aplicar') %></div>
+                <div class="st-row__d">
+                  <%= t('database.v_subida_el_v2_se_aplicara_al_cerrar_pitwall', { v: humanSize(pendingRestore.sizeBytes), v2: pendingRestore.uploadedAt.toLocaleString('es-ES'), v3: pendingRestore.uploadedAt.toLocaleString('en-US') }) %>
+                </div>
+              </div>
+              <form action="/database/restore/cancel" method="POST"
+                    onsubmit="return confirm('<%= t('database.cancelar_la_importacion_pendiente_no_se_aplicara') %>')">
+                <button type="submit" class="vt-btn vt-btn--ghost"><%= t('database.cancelar_importacion') %></button>
+              </form>
+            </div>
+          <% } %>
+
+          <form action="/database/restore" method="POST" enctype="multipart/form-data" class="db-upload">
+            <label class="db-drop">
+              <input type="file" name="backup_file" accept=".db" required>
+              <svg viewBox="0 0 24 24"><path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z"/><path d="M14 3v5h5M12 18v-6M9 15l3-3 3 3"/></svg>
+              <span class="db-drop__t"><%= t('database.arrastra_aqui_el_archivo_db_o_pulsa_para') %></span>
+            </label>
+            <ol class="db-steps">
+              <li><%= t('database.al_subirla_no_cambia_nada_todavia_queda') %></li>
+              <li><%= t('database.se_aplica_al_cerrar_pitwall_por_completo_y') %></li>
+              <li><%= t('database.antes_se_guarda_sola_una_copia_de_los_datos') %></li>
+            </ol>
+            <div class="db-upload__foot">
+              <button type="submit" class="vt-btn vt-btn--danger"
+                      onclick="return confirm('<%= t('database.esto_reemplazara_todos_los_datos_actuales_la') %>')">
+                <%= t('database.subir_copia') %>
+              </button>
+            </div>
+          </form>
+        </section>
+        </section>
+      </div>
+  </div>
+</div>
+
+<script>
+const DB_SECS = Array.from(document.querySelectorAll('.st-sec')).map(s => s.dataset.sec);
+function showSection(sec){
+  if (!DB_SECS.includes(sec)) sec = DB_SECS[0];
+  document.querySelectorAll('.st-sec').forEach(s => s.classList.toggle('is-active', s.dataset.sec === sec));
+  document.querySelectorAll('.st-nav__item').forEach(b => {
+    const on = b.dataset.sec === sec;
+    b.classList.toggle('is-active', on);
+    if (on) b.setAttribute('aria-current', 'true'); else b.removeAttribute('aria-current');
+  });
+  try { sessionStorage.setItem('pw.database.sec', sec); } catch {}
+}
+document.querySelectorAll('.st-nav__item').forEach(b => b.addEventListener('click', () => {
+  showSection(b.dataset.sec);
+  history.replaceState(null, '', '#' + b.dataset.sec);
+}));
+(function () {
+  let saved = null;
+  try { saved = sessionStorage.getItem('pw.database.sec'); } catch {}
+  showSection(location.hash.slice(1) || saved || DB_SECS[0]);
+})();
+
+document.querySelectorAll('.db-drop').forEach(drop => {
+  const input = drop.querySelector('input[type=file]');
+  const label = drop.querySelector('.db-drop__t');
+  const empty = label.textContent;
+  input.addEventListener('change', () => {
+    const f = input.files && input.files[0];
+    label.textContent = f ? f.name : empty;
+    drop.classList.toggle('has-file', !!f);
+  });
+  ['dragenter', 'dragover'].forEach(ev => drop.addEventListener(ev, () => drop.classList.add('is-over')));
+  ['dragleave', 'drop'].forEach(ev => drop.addEventListener(ev, () => drop.classList.remove('is-over')));
+});
+</script>
+
+<%- include('../partials/footer') %>

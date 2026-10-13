@@ -1,0 +1,19 @@
+<%# Vuelta mínima (Pt) del entreno competitivo. Mismo criterio y mismas unidades
+    (segundos) que el alta de carrera: por debajo de este tiempo el cruce es una
+    vuelta fantasma y se descarta. En blanco hereda la del circuito; 0 desactiva
+    el filtro. El id `minLapS` lo usa el script del selector de circuito para
+    precargarlo al cambiar de circuito. %>
+<div class="vt-field" style="margin-top:12px">
+  <label for="minLapS"><%= t('_min-lap-field.vuelta_minima_pt') %></label>
+  <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+    <input class="vt-inp is-mono" type="number" id="minLapS" name="min_lap_s"
+           min="0" max="600" step="0.01" style="width:110px"
+           value="<%= defaultMinLapMs > 0 ? (defaultMinLapMs / 1000).toFixed(2) : '' %>">
+    <span class="vt-hint" style="margin:0">
+      <%= t('_min-lap-field.segundos_0_sin_filtro') %>
+    </span>
+  </div>
+  <p class="vt-hint" style="margin-top:8px">
+    <%= t('_min-lap-field.los_cruces_por_debajo_de_este_tiempo_se') %>
+  </p>
+</div>

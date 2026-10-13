@@ -1,0 +1,191 @@
+<!DOCTYPE html>
+<html lang="<%= lang %>">
+<head>
+  <meta charset="UTF-8">
+<%- include('../partials/i18n-client') %>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title><%= t('common.entrenamiento') %> — PitWall</title>
+  <link rel="stylesheet" href="/css/fonts.css">
+  <link rel="stylesheet" href="/css/semaphore.css">
+  <link rel="stylesheet" href="/css/training.css?v=<%= Date.now() %>">
+</head>
+<body class="training-body">
+
+  <!-- ── Cabecera (mismos botones que el directo de carrera) ───────────── -->
+  <header class="training-header">
+    <div class="training-header__timer">
+      <div id="trainingTimer" class="tr-timer">00:00</div>
+      <div class="tr-timer-label"><%= t('live.tiempo') %></div>
+    </div>
+
+    <div class="training-header__info">
+      <div class="tr-title"><%= (typeof heatNumber !== 'undefined' && heatNumber !== null) ? (t('common.entreno_de_competicion')) : (t('common.entreno_libre')) %></div>
+      <div class="tr-subtitle" id="tr-status">
+        <% if (standby) { %>
+          <span class="tr-standby-badge"><%= t('client.common.esperando_go') %></span>
+        <% } else { %>
+          <%= lanes.length %> <%= t('client.common.carriles_activos') %>
+        <% } %>
+      </div>
+    </div>
+
+    <div class="training-header__actions">
+      <%# Controles cuando PitWall inicia la sesión (simulación, BART o TicTac). En
+          DS-300 manda la caja, así que no se muestran. %>
+      <% const _swGo  = (typeof softwareGo !== 'undefined' && softwareGo) || (typeof isSimulating !== 'undefined' && isSimulating) || (typeof isBart !== 'undefined' && isBart); %>
+      <% const _paused = typeof isPaused !== 'undefined' && isPaused; %>
+      <% const _mode  = (typeof heatNumber !== 'undefined' && heatNumber !== null) ? 'competition' : 'free'; %>
+      <% if (_swGo && standby) { %>
+        <form id="trGoForm" action="/training/go" method="POST">
+          <input type="hidden" name="mode" value="<%= _mode %>">
+          <label class="tr-dur" title="<%= t('live.duracion_min') %>">
+            <input type="number" name="duration_minutes" min="1" max="600" value="10">
+            <span>min</span>
+          </label>
+          <button class="lbtn lbtn--go" type="submit" title="<%= t('live.arrancar_entrenamiento') %>">
+            <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M8 5v14l11-7z"/></svg>
+            <span>GO</span>
+          </button>
+        </form>
+      <% } else if (_swGo && !standby) { %>
+        <% if (_paused) { %>
+          <form id="trResumeForm" action="/training/resume" method="POST">
+            <input type="hidden" name="mode" value="<%= _mode %>">
+            <button class="lbtn lbtn--go" type="submit">
+              <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M8 5v14l11-7z"/></svg>
+              <span><%= t('live.reanudar') %></span>
+            </button>
+          </form>
+        <% } else { %>
+          <form id="trPauseForm" action="/training/pause" method="POST">
+            <input type="hidden" name="mode" value="<%= _mode %>">
+            <button class="lbtn" type="submit" title="<%= t('live.pausar') %>">
+              <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><rect x="6" y="5" width="4" height="14" rx="1"/><rect x="14" y="5" width="4" height="14" rx="1"/></svg>
+              <span>PAUSE</span>
+            </button>
+          </form>
+        <% } %>
+        <form id="trStopForm" action="/training/halt" method="POST">
+          <input type="hidden" name="mode" value="<%= _mode %>">
+          <button class="lbtn lbtn--fin" type="submit" title="<%= t('common.parar') %>">
+            <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><rect x="6" y="6" width="12" height="12" rx="1.5"/></svg>
+            <span>STOP</span>
+          </button>
+        </form>
+      <% } %>
+      <button id="voiceBtn" class="lbtn lbtn--back" type="button" onclick="toggleVoice()">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M11 5L6 9H2v6h4l5 4z"/><path d="M15 9a3 3 0 0 1 0 6"/><path d="M18 6a7 7 0 0 1 0 12"/></svg>
+        <span id="voiceLbl"><%= t('client.common.todas') %></span>
+      </button>
+      <button id="viewBtn" class="lbtn lbtn--view" type="button" onclick="openTrainingPicker()" title="<%= t('live.cambiar_vista') %>">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="3" width="7" height="7" rx="1.2"/><rect x="14" y="3" width="7" height="7" rx="1.2"/><rect x="3" y="14" width="7" height="7" rx="1.2"/><rect x="14" y="14" width="7" height="7" rx="1.2"/></svg>
+        <span><%= t('live.vista') %></span>
+      </button>
+      <% if (typeof heatNumber !== 'undefined' && heatNumber !== null) { %>
+        <%# Con la sesión rodando, /training y /training/competition redirigen al
+            directo: esta es la única vía a los heats ya guardados. %>
+        <a class="lbtn lbtn--back lbtn--icon" href="/training/competition/results" target="_blank"
+           title="<%= t('live.resultados_heats_guardados_de_esta_sesion_y_de') %>">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M8 21h8M12 17v4M7 4h10v6a5 5 0 0 1-10 0z"/><path d="M7 5H4.5A1.5 1.5 0 0 0 3 6.5 3.5 3.5 0 0 0 6.5 10M17 5h2.5A1.5 1.5 0 0 1 21 6.5 3.5 3.5 0 0 1 17.5 10"/></svg>
+        </a>
+        <form action="/training/competition/stop" method="POST"
+          onsubmit="return confirm('<%= t('live.reiniciar_sesion_se_perderan_todos_los_datos') %>')">
+          <button class="lbtn lbtn--repeat" type="submit" title="<%= t('live.reiniciar_sesion') %>">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 12a9 9 0 0 1 15.5-6.4M21 3v6h-6M21 12a9 9 0 0 1-15.5 6.4M3 21v-6h6"/></svg>
+            <span>Reset</span>
+          </button>
+        </form>
+      <% } else { %>
+        <form action="/training/free/reset" method="POST"
+          onsubmit="return confirm('<%= t('live.reiniciar_sesion_se_borraran_los_records') %>')">
+          <button class="lbtn lbtn--repeat" type="submit" title="<%= t('live.reiniciar_sesion') %>">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 12a9 9 0 0 1 15.5-6.4M21 3v6h-6M21 12a9 9 0 0 1-15.5 6.4M3 21v-6h6"/></svg>
+            <span>Reset</span>
+          </button>
+        </form>
+      <% } %>
+      <button id="fsBtn" class="lbtn lbtn--back lbtn--icon" type="button" onclick="toggleTrFullscreen()" title="<%= t('common.pantalla_completa') %>">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M8 3H5a2 2 0 0 0-2 2v3m18 0V5a2 2 0 0 0-2-2h-3M3 16v3a2 2 0 0 0 2 2h3m8 0h3a2 2 0 0 0 2-2v-3"/></svg>
+      </button>
+      <form action="/training/exit" method="POST">
+        <button class="lbtn lbtn--back" type="submit" title="<%= t('common.volver') %>">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M19 12H5M12 19l-7-7 7-7"/></svg>
+          <span><%= t('common.volver') %></span>
+        </button>
+      </form>
+    </div>
+  </header>
+
+  <%# Lo pinta training.js con el dueño del GO (GoOwnerService) y lo refresca con «go:owner». %>
+  <div id="goOwnerBanner" class="flash flash--error go-owner-banner" hidden style="margin:10px 0"></div>
+
+  <!-- ── Lane cards ────────────────────────────────────────────────────────── -->
+  <div class="training-grid" id="trainingGrid" style="--lanes: <%= lanes.length %>; --cols: <%= Math.min(8, lanes.length) %>"></div>
+
+  <!-- ── Resting participants (competition only, when P > N) ───────────────── -->
+  <% if (typeof resting !== 'undefined' && resting && resting.length > 0) { %>
+  <div id="restingBar" class="resting-bar">
+    <div class="resting-bar__title"><%= t('live.en_descanso') %></div>
+    <div class="resting-bar__items" id="restingItems">
+      <% resting.forEach(r => { %>
+        <div class="resting-chip">
+          <span class="resting-chip__num">DSC<%= r.restNum %></span>
+          <span class="resting-chip__dot" style="background:<%= r.color %>"></span>
+          <span class="resting-chip__name"><%- (function(c){ if(!c) return ''; var f=String(c).split('|')[1]; if(!f) return ''; var i = f; if (f==='__SVG__') i = '<svg xmlns=\'http://www.w3.org/2000/svg\' viewBox=\'0 0 9 6\' width=\'16\' height=\'11\' style=\'border-radius:2px;vertical-align:middle\'><rect width=\'9\' height=\'6\' fill=\'#FCDD09\'/><rect y=\'0.667\' width=\'9\' height=\'0.889\' fill=\'#DA121A\'/><rect y=\'2.222\' width=\'9\' height=\'0.889\' fill=\'#DA121A\'/><rect y=\'3.778\' width=\'9\' height=\'0.889\' fill=\'#DA121A\'/><rect y=\'5.333\' width=\'9\' height=\'0.667\' fill=\'#DA121A\'/></svg>'; else if (f==='__SVG_EUS__') i = '<svg xmlns=\'http://www.w3.org/2000/svg\' viewBox=\'0 0 9 6\' width=\'16\' height=\'11\' style=\'border-radius:2px;vertical-align:middle\'><rect width=\'9\' height=\'6\' fill=\'#DC0A2D\'/><line x1=\'0\' y1=\'0\' x2=\'9\' y2=\'6\' stroke=\'#00933C\' stroke-width=\'1.8\'/><line x1=\'0\' y1=\'6\' x2=\'9\' y2=\'0\' stroke=\'#00933C\' stroke-width=\'1.8\'/><rect x=\'0\' y=\'2.4\' width=\'9\' height=\'1.2\' fill=\'#FFFFFF\'/><rect x=\'3.9\' y=\'0\' width=\'1.2\' height=\'6\' fill=\'#FFFFFF\'/></svg>'; else { var iso = flagEmojiToIso(f); if (iso) i = '<img src=\'/flags/4x3/'+iso+'.svg\' alt=\'\' width=\'16\' height=\'11\' style=\'object-fit:cover;border-radius:2px;vertical-align:middle\'>'; } return '<span class="lane-flag">'+i+'</span>'; })(r.country) %><%= r.name %></span>
+        </div>
+      <% }) %>
+    </div>
+  </div>
+  <% } else { %>
+  <div id="restingBar" class="resting-bar" style="display:none">
+    <div class="resting-bar__title"><%= t('live.en_descanso') %></div>
+    <div class="resting-bar__items" id="restingItems"></div>
+  </div>
+  <% } %>
+
+  <!-- ── View picker modal ────────────────────────────────────────────── -->
+  <div id="trainingPickerOverlay" class="vp-overlay" hidden onclick="if(event.target===this)closeTrainingPicker()">
+    <div class="vp-modal" role="dialog" aria-modal="true">
+      <div class="vp-header">
+        <div class="vp-title"><%= t('live.elige_como_ver_el_entrenamiento') %></div>
+        <button class="vp-x" onclick="closeTrainingPicker()" aria-label="<%= t('common.cerrar') %>">✕</button>
+      </div>
+      <div class="vp-grid">
+        <button class="vp-opt" data-mode="history" onclick="selectTrainingView('history')">
+          <div class="vp-thumb vp-thumb--tr-history" aria-hidden="true">
+            <span></span><span></span><span></span><span></span>
+          </div>
+          <div class="vp-label"><%= t('live.tarjetas_con_historial') %></div>
+          <div class="vp-desc"><%= t('live.cada_carril_con_sus_10_ultimas_vueltas') %></div>
+        </button>
+        <button class="vp-opt" data-mode="compact" onclick="selectTrainingView('compact')">
+          <div class="vp-thumb vp-thumb--tr-compact" aria-hidden="true">
+            <span></span><span></span><span></span><span></span><span></span><span></span>
+          </div>
+          <div class="vp-label"><%= t('live.compacta') %></div>
+          <div class="vp-desc"><%= t('live.ultima_vuelta_mejor_media_y_record_con_un_ritmo') %></div>
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    const TRAINING_DATA = <%- JSON.stringify({
+      startedAt:      startedAt,
+      durationMs:     durationMs,
+      standby:        standby,
+      isPaused:       typeof isPaused !== 'undefined' && isPaused,
+      heatNumber:     typeof heatNumber !== 'undefined' ? heatNumber : null,
+      isCompetition:  typeof heatNumber !== 'undefined' && heatNumber !== null,
+      sessionRecords: typeof sessionRecords !== 'undefined' ? sessionRecords : {},
+      historyMode:    typeof historyMode !== 'undefined' ? historyMode : 'recent',
+      lanes:          lanes,
+      goOwner:        typeof goOwner !== 'undefined' ? goOwner : null
+    }) %>;
+    const LANG = "<%= lang %>";
+  </script>
+  <script src="/socket.io/socket.io.js"></script>
+  <script src="/js/semaphore.js"></script>
+  <script src="/js/training.js"></script>
+</body>
+</html>

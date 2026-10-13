@@ -1,0 +1,111 @@
+<%- include('../partials/header', { pageTitle: t('common.escenarios') }) %>
+
+<div class="vt-page">
+  <div class="vt-wrap">
+
+    <a href="/" class="vt-back-link">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M19 12H5M12 19l-7-7 7-7"/></svg>
+      <%= t('common.inicio') %>
+    </a>
+
+    <% if (flash) { %>
+      <div class="flash flash--<%= flash.type %>" style="margin-bottom:1rem"><%- flash.text %></div>
+    <% } %>
+
+    <div class="vt-head">
+      <div class="vt-head__title">
+        <h1><%= t('common.escenarios') %></h1>
+        <span class="vt-cnt"><%= circuits.length %></span>
+      </div>
+      <div class="vt-head__actions">
+        <a href="/circuits/new" class="vt-btn vt-btn--primary">
+          + <%= t('common.nuevo_escenario') %>
+        </a>
+      </div>
+    </div>
+
+    <% if (circuits.length === 0) { %>
+      <div class="vt-empty" style="margin-top:32px">
+        <div class="vt-empty__t"><%= t('circuits.sin_escenarios') %></div>
+        <p style="color:var(--vt-mute);margin:6px 0 16px">
+          <%= t('common.crea_uno_para_reutilizarlo_en_tus_carreras') %>
+        </p>
+        <a href="/circuits/new" class="vt-btn vt-btn--primary">+ <%= t('common.crear_escenario') %></a>
+      </div>
+    <% } else { %>
+
+      <div class="vt-table-card">
+        <table class="vt-table">
+          <thead>
+            <tr>
+              <th><%= t('common.nombre') %></th>
+              <th class="is-num"><%= t('common.circuitos') %></th>
+              <th><%= t('circuits.configuracion') %></th>
+              <th class="is-num"><%= t('common.carriles') %></th>
+              <th><%= t('circuits.vuelta_min') %></th>
+              <th><%= t('circuits.por_categoria') %></th>
+              <th><%= t('common.notas') %></th>
+              <th><%= t('common.creado') %></th>
+              <th class="is-actions"></th>
+            </tr>
+          </thead>
+          <tbody>
+            <% circuits.forEach(c => {
+              let cfg = [];
+              try { cfg = JSON.parse(c.circuits_config || '[]'); } catch {}
+              if (!Array.isArray(cfg) || cfg.length === 0) cfg = [c.lanes_count];
+              const cfgLabel = cfg.join(' + ');
+              const created = c.created_at
+                ? new Date(c.created_at.replace(' ', 'T') + 'Z').toLocaleDateString(localeFor(lang))
+                : '—';
+            %>
+              <tr>
+                <td class="is-name"><%= c.name %></td>
+                <td class="is-num is-mono"><%= c.circuits_count %></td>
+                <td class="is-mono is-info"><%= cfgLabel %></td>
+                <td class="is-num is-mono is-name"><%= c.lanes_count %></td>
+                <td class="is-mono">
+                  <% if (c.min_lap_ms > 0) { %>
+                    <span style="color:var(--vt-green);font-weight:600"><%= (c.min_lap_ms / 1000).toFixed(2) %>s</span>
+                  <% } else { %>
+                    <span class="is-mute">—</span>
+                  <% } %>
+                </td>
+                <td>
+                  <% if (c.category_times && c.category_times.length > 0) { %>
+                    <div style="display:flex;flex-wrap:wrap;gap:6px">
+                      <% c.category_times.forEach(ct => { %>
+                        <span style="font-family:'IBM Plex Mono',monospace;font-size:11.5px;background:var(--vt-surface);border:1px solid var(--vt-border);border-radius:6px;padding:2px 8px">
+                          <span style="color:var(--vt-mute)"><%= ct.category_name %>:</span>
+                          <span style="color:var(--vt-blue);font-weight:600"><%= (ct.min_lap_ms / 1000).toFixed(2) %>s</span>
+                        </span>
+                      <% }) %>
+                    </div>
+                  <% } else { %>
+                    <span class="is-mute">—</span>
+                  <% } %>
+                </td>
+                <td class="is-mute"><%= c.description || '—' %></td>
+                <td class="is-mute is-mono"><%= created %></td>
+                <td class="is-actions">
+                  <a href="/circuits/<%= c.id %>/edit" class="vt-icon-btn" title="<%= t('client.common.editar') %>">
+                    <svg viewBox="0 0 24 24"><path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4z"/></svg>
+                  </a>
+                  <form action="/circuits/<%= c.id %>/delete" method="POST" style="display:inline"
+                        onsubmit="return confirm('<%= t('circuits.eliminar_escenario') %>')">
+                    <button type="submit" class="vt-icon-btn is-danger" title="<%= t('common.eliminar') %>">
+                      <svg viewBox="0 0 24 24"><path d="M4 7h16M9 7V5a2 2 0 0 1 2-2h2a2 2 0 0 1 2 2v2M6 7l1 13a2 2 0 0 0 2 2h6a2 2 0 0 0 2-2l1-13"/></svg>
+                    </button>
+                  </form>
+                </td>
+              </tr>
+            <% }) %>
+          </tbody>
+        </table>
+      </div>
+
+    <% } %>
+  </div>
+</div>
+
+<%- include('../partials/footer') %>

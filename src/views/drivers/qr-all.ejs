@@ -1,0 +1,69 @@
+<!DOCTYPE html>
+<html lang="<%= lang %>">
+<head>
+  <meta charset="UTF-8">
+<%- include('../partials/i18n-client') %>
+  <title><%= t('qr.titulo_pilotos') %></title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { font-family: Arial, sans-serif; background: #fff; padding: 1cm; }
+    h1 { font-size: 1.1rem; margin-bottom: 1rem; color: #333; }
+    .grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
+      gap: .75rem;
+    }
+    .qr-card {
+      border: 1.5px solid #ccc;
+      border-radius: 8px;
+      padding: .75rem;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: .4rem;
+      page-break-inside: avoid;
+    }
+    .qr-name  { font-size: .85rem; font-weight: 700; text-align: center; word-break: break-word; }
+    .qr-cat   { font-size: .7rem; color: #666; }
+    .qr-img   { display: block; width: 120px; height: 120px; }
+    .qr-club  { display: block; height: 26px; max-width: 110px; object-fit: contain; }
+    .qr-code  { font-family: monospace; font-size: .6rem; color: #aaa; }
+    .no-print { padding: .75rem 0; display: flex; gap: .75rem; justify-content: center; margin-bottom: 1rem; }
+    button { padding: .45rem 1.1rem; border-radius: 6px; border: 1px solid #ccc; cursor: pointer; font-size: .9rem; }
+    button.primary { background: #1a7f37; color: #fff; border-color: #1a7f37; }
+    @media print {
+      .no-print { display: none; }
+      body { padding: .3cm; }
+    }
+  </style>
+</head>
+<body>
+  <div class="no-print">
+    <button onclick="window.print()" class="primary">🖨 <%= t('qr-all.imprimir_todos') %></button>
+    <button onclick="window.close()"><%= t('common.cerrar') %></button>
+  </div>
+
+  <%- include('../partials/club-brand') %>
+  <% const _club = typeof clubBrand === 'function' ? clubBrand() : null; const _clubLogo = _club && _club.logoUrl; %>
+
+  <% if (items.length === 0) { %>
+    <p style="color:#888"><%= t('qr-all.no_hay_pilotos_con_qr') %></p>
+  <% } else { %>
+    <div class="grid">
+      <% items.forEach(p => { %>
+        <div class="qr-card">
+          <% if (_clubLogo) { %><img class="qr-club" src="<%= _clubLogo %>" alt=""><% } %>
+          <% if (p.qrDataUrl) { %>
+            <img class="qr-img" src="<%= p.qrDataUrl %>" alt="QR">
+          <% } else { %>
+            <div style="width:120px;height:120px;display:grid;place-items:center;color:#a00;font-size:.7rem;border:1px dashed #ccc;border-radius:6px">⚠️</div>
+          <% } %>
+          <div class="qr-name"><%= p.name %></div>
+          <div class="qr-cat"><%= { platino:'💎 Platino', oro:'🥇 Oro', plata:'🥈 Plata', bronce:'🥉 Bronce' }[p.category] || p.category %></div>
+          <div class="qr-code"><%= p.qr_code || '—' %></div>
+        </div>
+      <% }) %>
+    </div>
+  <% } %>
+</body>
+</html>

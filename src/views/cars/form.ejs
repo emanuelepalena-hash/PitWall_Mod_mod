@@ -1,0 +1,84 @@
+<%- include('../partials/header', { lang, pageTitle: typeof pageTitle !== 'undefined' ? pageTitle : '' }) %>
+
+<div class="vt-page">
+  <div class="vt-wrap vt-wrap--narrow">
+
+    <a href="/cars" class="vt-back-link">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M19 12H5M12 19l-7-7 7-7"/></svg>
+      <%= t('form.volver_a_coches') %>
+    </a>
+
+    <h1>
+      <% if (car) { %>
+        <%= t('form.editar_coche') %>
+      <% } else { %>
+        <%= t('common.nuevo_coche') %>
+      <% } %>
+    </h1>
+
+    <% if (error) { %>
+      <div class="vt-alert" style="margin-top:16px">
+        <p><strong><%= t('client.common.error') %>:</strong> <%= error %></p>
+      </div>
+    <% } %>
+
+    <form action="<%= car ? '/cars/' + car.id : '/cars' %>" method="POST" class="vt-panel">
+
+      <div class="vt-fields vt-fields--2">
+        <div class="vt-field">
+          <label><%= t('common.marca') %> *</label>
+          <input class="vt-inp" type="text" id="brand" name="brand" maxlength="50" list="brandList"
+            value="<%= car?.brand || '' %>"
+            placeholder="<%= t('form.ej_slot_it_nsr') %>"
+            autocomplete="off" autofocus required>
+          <datalist id="brandList">
+            <% brands.forEach(b => { %><option value="<%= b %>"><% }) %>
+          </datalist>
+        </div>
+
+        <div class="vt-field">
+          <label><%= t('common.modelo') %> *</label>
+          <input class="vt-inp" type="text" name="model" maxlength="100"
+            value="<%= car?.model || '' %>"
+            placeholder="<%= t('form.ej_ferrari_360_gtc') %>"
+            autocomplete="off" required>
+        </div>
+      </div>
+
+      <div class="vt-form-group" style="margin-top:18px">
+        <label class="vt-form-group__label" for="category"><%= t('client.common.categoria') %> *</label>
+        <input class="vt-inp" type="text" id="category" name="category_name" maxlength="100" list="categoryList"
+          value="<%= car?.category_name || '' %>"
+          placeholder="<%= t('form.escribe_o_selecciona') %>"
+          autocomplete="off" required>
+        <datalist id="categoryList">
+          <% categories.forEach(cat => { %><option value="<%= cat.name %>"><% }) %>
+        </datalist>
+        <p class="vt-hint">
+          <%= t('form.categoria_a_la_que_pertenece_este_coche_escribe') %>
+        </p>
+      </div>
+
+      <div class="vt-form-group">
+        <label class="vt-form-group__label" for="description"><%= t('common.descripcion') %></label>
+        <textarea class="vt-inp" id="description" name="description" rows="3" maxlength="200"
+          style="height:auto;padding-top:12px;padding-bottom:12px;line-height:1.5;resize:vertical"
+          placeholder="<%= t('form.descripcion_opcional') %>"><%= car?.description || '' %></textarea>
+        <p class="vt-hint"><%= t('form.informacion_adicional_sobre_este_coche') %></p>
+      </div>
+
+      <div class="vt-form-actions">
+        <a href="/cars" class="vt-btn vt-btn--ghost"><%= t('client.common.cancelar') %></a>
+        <button type="submit" class="vt-btn vt-btn--primary">
+          <% if (car) { %>
+            <%= t('common.guardar_cambios') %>
+          <% } else { %>
+            <%= t('form.crear_coche') %>
+          <% } %>
+        </button>
+      </div>
+    </form>
+  </div>
+</div>
+
+<%- include('../partials/footer') %>

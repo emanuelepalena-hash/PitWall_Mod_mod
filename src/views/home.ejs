@@ -1,0 +1,194 @@
+<%- include('partials/header', { lang, pageTitle: t('common.inicio'), hideNavbar: true }) %>
+
+<link rel="stylesheet" href="/css/fonts.css">
+
+<%
+const ss = (typeof serialStatus !== 'undefined' && serialStatus) ? serialStatus : { simulating: false, ports: [] };
+const serialConnected = Array.isArray(ss.ports) && ss.ports.length > 0;
+const portLabels = serialConnected ? ss.ports.map(p => String(p).split('/').pop()).join(' · ') : '';
+const portCount = serialConnected ? ss.ports.length : 0;
+const inProgressRaces = typeof activeRaceCount !== 'undefined' ? activeRaceCount : 0;
+const c = typeof counts !== 'undefined' ? counts : { drivers: 0, teams: 0, cars: 0, categories: 0, circuits: 0 };
+%>
+
+<% if (isGuestAccess) { %>
+<div class="vol-home">
+  <div class="vol-home__wrap">
+
+    <!-- ── Topbar ─────────────────────────────────────────────────── -->
+    <div class="vh-topbar">
+      <div class="vh-brand">
+        <svg class="vh-mark" viewBox="0 0 100 100" aria-hidden="true">
+          <rect x="6" y="6" width="88" height="88" rx="22" ry="22" fill="none" stroke="currentColor" stroke-width="6.5"/>
+          <polyline points="30,34 51,50 30,66" fill="none" stroke="currentColor" stroke-width="8" stroke-linecap="round" stroke-linejoin="round"/>
+          <rect x="56" y="58" width="17" height="11" rx="3" fill="#F0404C"/>
+        </svg>
+        <div class="vh-wordmark">
+          <div class="vh-nm">PIT<span class="vh-nm-t">W</span>ALL</div>
+          
+        </div>
+      </div>
+
+      <% if (!isGuestAccess) { %>
+      <% if (ss.simulating) { %>
+        <a href="/settings" class="vh-status vh-status--sim">
+          <span class="vh-status__dot"></span>
+          <%= t('common.modo_simulacion') %>
+        </a>
+      <% } else if (serialConnected) { %>
+        <a href="/settings" class="vh-status vh-status--ok">
+          <span class="vh-status__dot"></span>
+          <%= ss.label || 'DS-300' %> ×<%= portCount %>
+          <span class="vh-status__port">· <%= portLabels %></span>
+        </a>
+      <% } else { %>
+        <a href="/settings" class="vh-status vh-status--off">
+          <span class="vh-status__dot"></span>
+          <%= t('client.common.sin_conexion') %>
+        </a>
+      <% } %>
+      <% } %>
+      <% if (typeof serverIps !== 'undefined' && serverIps && serverIps.length) { %>
+        <span class="vh-status vh-status--ok"
+              style="background:rgba(88,166,255,.12);border-color:rgba(88,166,255,.35);color:#58a6ff"
+              title="<%= (t('common.direccion_es_del_servidor')) + serverIps.map(function(i){ return i.ip + ':' + serverPort + ' (' + i.name + ')'; }).join('  ·  ') %>">
+          <span class="vh-status__dot" style="background:#58a6ff"></span>
+          <span style="font-family:monospace"><%= serverIps[0].ip %>:<%= serverPort %><% if (serverIps.length > 1) { %> +<%= serverIps.length - 1 %><% } %></span>
+        </span>
+      <% } %>
+    </div>
+
+      <!-- Visitante externo (IP no permitida): acceso público a estadísticas en
+           vivo y resultados, con el mismo estilo de tarjeta que la vista admin,
+           agrupado por "carreras activas" (en curso) y "carreras pasadas" (finalizadas). -->
+      <section class="vh-section" style="margin-top:1.5rem">
+        <button type="button" class="vh-sec-h" aria-expanded="true">
+          <span class="vh-sec-chev" aria-hidden="true">▸</span>
+          <span class="vh-sec-lbl"><%= t('home.carreras_activas') %></span>
+          <span class="vh-sec-line"></span>
+        </button>
+        <div class="vh-grid">
+          <% if (typeof activePoleRaces !== 'undefined' && activePoleRaces.length > 0) { %>
+          <a class="vh-card" href="/races/<%= activePoleRaces[0].id %>/pole/timing" style="--a:#f0404c;--a-bg:rgba(240,64,76,.13)">
+            <div class="vh-ico">
+              <svg viewBox="0 0 24 24" aria-hidden="true">
+                <path d="M6 3v18M6 4h11l-2 4 2 4H6" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/>
+              </svg>
+            </div>
+            <div class="vh-body">
+              <div class="vh-t">
+                <%= t('common.pole_en_directo') %>
+                <span class="vh-live"><span class="vh-live__d"></span><%= t('home.en_curso') %></span>
+              </div>
+              <div class="vh-d"><%= t('home.sigue_el_cronometraje_de_la_pole_en_directo') %></div>
+            </div>
+            <span class="vh-chev" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M9 6l6 6-6 6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg></span>
+          </a>
+          <% } %>
+
+          <a class="vh-card" href="/race-stats" style="--a:#22c55e;--a-bg:rgba(34,197,94,.12)">
+            <div class="vh-ico">
+              <svg viewBox="0 0 24 24" aria-hidden="true">
+                <path d="M3 21h18M6 21v-6M11 21V8M16 21v-9M21 21V5" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/>
+              </svg>
+            </div>
+            <div class="vh-body">
+              <div class="vh-t"><%= t('common.estadisticas_en_vivo') %></div>
+              <div class="vh-d"><%= t('home.sigue_tu_carrera_y_comparate_con_tus_rivales_en') %></div>
+            </div>
+            <span class="vh-chev" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M9 6l6 6-6 6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg></span>
+          </a>
+
+          <a class="vh-card" href="/lap" style="--a:#58a6ff;--a-bg:rgba(88,166,255,.12)">
+            <div class="vh-ico">
+              <svg viewBox="0 0 24 24" aria-hidden="true">
+                <rect x="7" y="2" width="10" height="20" rx="2.5" fill="none" stroke="currentColor" stroke-width="1.7"/>
+                <path d="M11 18.5h2" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/>
+              </svg>
+            </div>
+            <div class="vh-body">
+              <div class="vh-t">Lap</div>
+              <div class="vh-d"><%= t('home.sigue_el_timing_de_tu_equipo_en_directo_desde') %></div>
+            </div>
+            <span class="vh-chev" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M9 6l6 6-6 6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg></span>
+          </a>
+
+          <a class="vh-card" href="/control/shifts?allcards=1" style="--a:#a855f7;--a-bg:rgba(168,85,247,.12)">
+            <div class="vh-ico">
+              <svg viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">
+                <rect x="3" y="3" width="7" height="7"/>
+                <rect x="14" y="3" width="7" height="7"/>
+                <rect x="3" y="14" width="7" height="7"/>
+                <path d="M14 14h3v3M20 14v3M14 20h3v1M20 17v4"/>
+              </svg>
+            </div>
+            <div class="vh-body">
+              <div class="vh-t"><%= t('common.control_de_pilotos') %></div>
+              <div class="vh-d"><%= t('home.consulta_el_estado_de_los_turnos_de_piloto_en') %></div>
+            </div>
+            <span class="vh-chev" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M9 6l6 6-6 6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg></span>
+          </a>
+        </div>
+      </section>
+
+      <section class="vh-section">
+        <button type="button" class="vh-sec-h" aria-expanded="true">
+          <span class="vh-sec-chev" aria-hidden="true">▸</span>
+          <span class="vh-sec-lbl"><%= t('home.carreras_pasadas') %></span>
+          <span class="vh-sec-line"></span>
+        </button>
+        <div class="vh-grid">
+          <a class="vh-card" href="/results" style="--a:#f6c90e;--a-bg:rgba(246,201,14,.12)">
+            <div class="vh-ico">
+              <svg viewBox="0 0 24 24" aria-hidden="true">
+                <path d="M8 21h8M12 17v4M7 4h10v6a5 5 0 0 1-10 0z M7 5H4.5A1.5 1.5 0 0 0 3 6.5 3.5 3.5 0 0 0 6.5 10 M17 5h2.5A1.5 1.5 0 0 1 21 6.5 3.5 3.5 0 0 1 17.5 10" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/>
+              </svg>
+            </div>
+            <div class="vh-body">
+              <div class="vh-t"><%= t('common.resultados') %></div>
+              <div class="vh-d"><%= t('home.consulta_resultados_y_estadisticas_de_carreras') %></div>
+            </div>
+            <span class="vh-chev" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M9 6l6 6-6 6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg></span>
+          </a>
+        </div>
+      </section>
+  </div>
+</div>
+
+<script>
+  // Plegar / desplegar secciones de la home (estado recordado por sección)
+  (function () {
+    const KEY = 'pw:home:collapsed';
+    let stored = {};
+    try { stored = JSON.parse(localStorage.getItem(KEY) || '{}'); } catch (_) {}
+
+    document.querySelectorAll('.vol-home .vh-section > .vh-sec-h').forEach(head => {
+      const section = head.closest('.vh-section');
+      const lbl = head.querySelector('.vh-sec-lbl');
+      const id = lbl ? lbl.textContent.trim() : '';
+
+      if (stored[id]) {
+        section.classList.add('vh-section--collapsed');
+        head.setAttribute('aria-expanded', 'false');
+      }
+
+      head.addEventListener('click', () => {
+        const collapsed = section.classList.toggle('vh-section--collapsed');
+        head.setAttribute('aria-expanded', String(!collapsed));
+        stored[id] = collapsed;
+        try { localStorage.setItem(KEY, JSON.stringify(stored)); } catch (_) {}
+      });
+    });
+  })();
+</script>
+<% } else { %>
+<% if (typeof homeNotice !== 'undefined' && homeNotice) { %>
+<div class="hm-wrap" style="padding:12px 24px 0">
+  <div class="vt-alert" role="status" style="margin:0;background:rgba(246,201,14,.10);border-color:rgba(246,201,14,.35);color:#f6e2a0"><%= homeNotice %></div>
+</div>
+<script>history.replaceState(null, '', location.pathname);</script>
+<% } %>
+<%- include('home/_admin') %>
+<% } %>
+
+<%- include('partials/footer') %>

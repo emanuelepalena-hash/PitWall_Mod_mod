@@ -1,0 +1,1811 @@
+<%- include('../partials/header', { pageTitle: t('settings.configuracion') }) %>
+
+<%
+const portsList = (connectedPorts || []).map(p => String(p).split('/').pop()).join(' · ');
+const portState = isSimulating ? 'sim' : (connectedPorts && connectedPorts.length > 0 ? 'ok' : 'off');
+const restartChip = '<span class="st-chip st-chip--warn">' + (t('settings.reinicio')) + '</span>';
+const navItems = [
+  { key: 'timing', label: t('settings.fuente_de_datos'), dot: portState === 'ok' ? 'ok' : (portState === 'sim' ? 'warn' : 'bad'),
+    icon: '<circle cx="12" cy="13" r="8"/><path d="M12 9v4l2.5 2M10 2h4M12 2v3"/>' },
+  { key: 'live', label: t('settings.preferencias'), dot: '',
+    icon: '<path d="M4 6h9M17 6h3M4 12h3M11 12h9M4 18h11M19 18h1"/><circle cx="15" cy="6" r="2"/><circle cx="9" cy="12" r="2"/><circle cx="17" cy="18" r="2"/>' },
+  { key: 'win', label: t('settings.ventanas_y_pantallas'), dot: '',
+    icon: '<rect x="2" y="4" width="13" height="10" rx="1.5"/><rect x="10" y="9" width="12" height="9" rx="1.5"/><path d="M5 18h4"/>' },
+  { key: 'net', label: t('settings.red_local'), dot: '',
+    icon: '<path d="M5 12.5a10 10 0 0 1 14 0M8.5 16a5 5 0 0 1 7 0M12 19.5h.01M2 9a15 15 0 0 1 20 0"/>' },
+  { key: 'sec', label: t('settings.seguridad'), dot: passwordEnabled ? 'ok' : '',
+    icon: '<rect x="5" y="11" width="14" height="10" rx="2"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/>' },
+  { key: 'web', label: t('settings.seguimiento_online'), dot: 'off',
+    icon: '<circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3c2.5 2.6 3.9 5.7 3.9 9S14.5 18.4 12 21c-2.5-2.6-3.9-5.7-3.9-9S9.5 5.6 12 3z"/>' },
+  { key: 'int', label: t('settings.integraciones'), dot: '',
+    icon: '<path d="M3 12h4l3-7 4 14 3-7h4"/>' },
+  { key: 'diag', label: t('settings.diagnostico'), dot: cfg.debug_mode === '1' ? 'warn' : '',
+    icon: '<rect x="8" y="8" width="8" height="10" rx="4"/><path d="M12 8V5M8 11H4M16 11h4M8 15H4M16 15h4"/>' },
+];
+%>
+
+<div class="vt-page st-page">
+  <div class="st-top">
+    <a href="/" class="vt-back-link">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M19 12H5M12 19l-7-7 7-7"/></svg>
+      <%= t('common.inicio') %>
+    </a>
+    <span class="st-top__sep"></span>
+    <h1 class="st-top__h"><%= t('settings.configuracion') %></h1>
+    <span class="st-top__fill"></span>
+    <% if (portState === 'sim') { %>
+      <div class="vt-port-pill is-sim"><span class="dot"></span> <%= t('settings.modo_simulacion_activo') %></div>
+    <% } else if (portState === 'ok') { %>
+      <div class="vt-port-pill" title="<%= connectedPorts.join('  ·  ') %>">
+        <span class="dot"></span>
+        <%= t('settings.conectado') %>
+        <span class="vt-mono"><%= connectedPorts.length > 1 ? connectedPorts.length + (t('settings.circuitos')) : '' %><%= portsList %></span>
+      </div>
+    <% } else { %>
+      <div class="vt-port-pill is-off"><span class="dot"></span> <%= t('settings.sin_conexion') %></div>
+    <% } %>
+  </div>
+
+  <form action="/settings" method="POST" class="st-form" id="settingsForm" novalidate>
+    <div class="st-layout">
+
+      <nav class="st-nav" aria-label="<%= t('common.secciones') %>">
+        <% navItems.forEach(it => { %>
+          <button type="button" class="st-nav__item <%= it.key === 'timing' ? 'is-active' : '' %>" data-sec="<%= it.key %>" <%= it.key === 'timing' ? 'aria-current=true' : '' %>>
+            <svg viewBox="0 0 24 24"><%- it.icon %></svg>
+            <span class="st-nav__lbl"><%= it.label %></span>
+            <span class="st-dot <%= it.dot ? 'st-dot--' + it.dot : '' %>" id="navDot-<%= it.key %>"></span>
+          </button>
+        <% }) %>
+        <div class="st-nav__note">
+          <span><%= t('settings.los_cambios_se_aplican_al_pulsar_guardar_y') %></span>
+          <span><%= t('settings.los_marcados_con') %> <%- restartChip %> <%= t('settings.necesitan_ademas_reiniciar_pitwall') %></span>
+        </div>
+      </nav>
+
+      <div class="st-main">
+        <!-- ══ Fuente de datos ═══════════════════════════════════════════ -->
+        <section class="st-sec is-active" data-sec="timing">
+          <header class="st-sec__h">
+            <h2><%= t('settings.fuente_de_datos') %></h2>
+            <p><%= t('settings.de_donde_llegan_las_vueltas') %></p>
+          </header>
+
+      <datalist id="baud-options">
+        <option value="9600"></option>
+        <option value="19200"></option>
+        <option value="38400"></option>
+        <option value="56000"></option>
+        <option value="57600"></option>
+        <option value="115200"></option>
+        <option value="230400"></option>
+        <option value="460800"></option>
+        <option value="921600"></option>
+      </datalist>
+
+      <div class="vt-opts">
+        <label class="vt-opt <%= (cfg.serial_mode || 'simulation') === 'simulation' ? 'is-sel' : '' %>" id="optSim">
+          <input type="radio" name="serial_mode" value="simulation" <%= (cfg.serial_mode || 'simulation') === 'simulation' ? 'checked' : '' %>>
+          <div class="vt-opt__radio"><svg viewBox="0 0 24 24"><path d="M5 12l4 4 10-10"/></svg></div>
+          <div class="vt-opt__ico">
+            <svg viewBox="0 0 24 24"><rect x="3" y="7" width="18" height="11" rx="5.5"/><path d="M7.5 11v3M6 12.5h3"/><circle cx="16" cy="11.5" r="1"/><circle cx="18" cy="14" r="1"/></svg>
+          </div>
+          <div class="vt-opt__t"><%= t('client.common.simulacion') %></div>
+          <div class="vt-opt__d"><%= t('settings.genera_vueltas_aleatorias_ideal_para_pruebas') %></div>
+        </label>
+
+        <label class="vt-opt <%= cfg.serial_mode === 'serial' ? 'is-sel' : '' %>" id="optDs">
+          <input type="radio" name="serial_mode" value="serial" <%= cfg.serial_mode === 'serial' ? 'checked' : '' %>>
+          <div class="vt-opt__radio"><svg viewBox="0 0 24 24"><path d="M5 12l4 4 10-10"/></svg></div>
+          <div class="vt-opt__ico">
+            <svg viewBox="0 0 24 24"><path d="M9 2v5M15 2v5"/><path d="M7 7h10v3a5 5 0 0 1-10 0z"/><path d="M12 15v6"/></svg>
+          </div>
+          <div class="vt-opt__t">DS</div>
+          <div class="vt-opt__d"><%= t('settings.uno_o_varios_ds_300_por_usb_rs_232') %></div>
+        </label>
+
+        <label class="vt-opt <%= cfg.serial_mode === 'serial_agg' ? 'is-sel' : '' %>" id="optAgg">
+          <input type="radio" name="serial_mode" value="serial_agg" <%= cfg.serial_mode === 'serial_agg' ? 'checked' : '' %>>
+          <div class="vt-opt__radio"><svg viewBox="0 0 24 24"><path d="M5 12l4 4 10-10"/></svg></div>
+          <div class="vt-opt__ico">
+            <svg viewBox="0 0 24 24"><path d="M9 2v5M15 2v5"/><path d="M7 7h10v3a5 5 0 0 1-10 0z"/><path d="M4 21h16"/><path d="M8 21v-3M12 21v-3M16 21v-3"/></svg>
+          </div>
+          <div class="vt-opt__t"><%= t('settings.ds_300_agrupador') %></div>
+          <div class="vt-opt__d"><%= t('settings.varias_cajas_ds_por_un_solo_puerto_com') %></div>
+        </label>
+
+        <label class="vt-opt <%= cfg.serial_mode === 'bart' ? 'is-sel' : '' %>" id="optBart">
+          <input type="radio" name="serial_mode" value="bart" <%= cfg.serial_mode === 'bart' ? 'checked' : '' %>>
+          <div class="vt-opt__radio"><svg viewBox="0 0 24 24"><path d="M5 12l4 4 10-10"/></svg></div>
+          <div class="vt-opt__ico">
+            <svg viewBox="0 0 24 24"><path d="M7 7l10 10-5 4V3l5 4L7 17"/></svg>
+          </div>
+          <div class="vt-opt__t">BART</div>
+          <div class="vt-opt__d"><%= t('settings.cronometro_ble_slot_it_policar_via_puente') %></div>
+        </label>
+
+        <label class="vt-opt <%= cfg.serial_mode === 'tictac' ? 'is-sel' : '' %>" id="optTictac">
+          <input type="radio" name="serial_mode" value="tictac" <%= cfg.serial_mode === 'tictac' ? 'checked' : '' %>>
+          <div class="vt-opt__radio"><svg viewBox="0 0 24 24"><path d="M5 12l4 4 10-10"/></svg></div>
+          <div class="vt-opt__ico">
+            <svg viewBox="0 0 24 24"><circle cx="12" cy="13" r="7"/><path d="M12 13V9M9 3h6"/></svg>
+          </div>
+          <div class="vt-opt__t">TicTac</div>
+          <div class="vt-opt__d"><%= t('settings.interface_tictacslot_cuentavueltas') %></div>
+        </label>
+      </div>
+
+      <!-- ── Simulation ──────────────────────────────────────────────────── -->
+      <div id="simSettings" style="margin-top:22px">
+        <div class="vt-sec-lbl"><%= t('settings.parametros_de_simulacion') %></div>
+        <div class="vt-fields vt-fields--2">
+          <div class="vt-field">
+            <label><%= t('settings.carriles_a_simular') %></label>
+            <input class="vt-inp is-mono" type="number" name="sim_lanes" min="1" max="32" value="<%= cfg.sim_lanes || 6 %>">
+          </div>
+          <div class="vt-field">
+            <label><%= t('settings.vuelta_media_ms') %></label>
+            <input class="vt-inp is-mono" type="number" name="sim_avg_ms" min="3000" max="60000" step="1000" value="<%= cfg.sim_avg_ms || 12000 %>">
+          </div>
+        </div>
+      </div>
+
+      <!-- ── BART (BLE timer via bridge) ──────────────────────────────────── -->
+      <div id="bartSettings" style="display:none;margin-top:26px">
+        <div class="vt-sub">
+          <div>
+            <h3><%= t('settings.cronometro_bart_ble') %></h3>
+            <p class="vt-sub__p">
+              <%= t('settings.cada_master_bart_p_ej_bart_track1_bart_track2') %>
+            </p>
+          </div>
+          <div class="vt-sub__actions">
+            <button type="button" class="vt-btn vt-btn--ghost vt-btn--sm" id="addBartMaster">
+              <svg viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg>
+              <%= t('settings.anadir_master') %>
+            </button>
+          </div>
+        </div>
+
+        <div class="vt-fields vt-fields--2" style="margin-top:14px">
+          <div class="vt-field">
+            <label><%= t('settings.transporte') %></label>
+            <div class="vt-selw">
+              <select name="bart_transport" id="bartTransport">
+                <option value="ble" <%= (cfg.bart_transport || 'ble') === 'ble' ? 'selected' : '' %>>BLE (<%= t('settings.directo') %>)</option>
+                <option value="tcp" <%= cfg.bart_transport === 'tcp' ? 'selected' : '' %>><%= t('settings.tcp_emulador_puente') %></option>
+              </select>
+            </div>
+          </div>
+          <div class="vt-field">
+            <label><%= t('settings.minlap_del_master_ms') %></label>
+            <input class="vt-inp is-mono" type="number" name="bart_minlap" min="0" max="65535" step="100"
+                   value="<%= cfg.bart_minlap || 2000 %>"
+                   title="<%= t('settings.filtro_anti_rebote_del_hardware_descarta_cruces') %>">
+          </div>
+        </div>
+
+        <div id="bartList" style="margin-top:14px">
+          <% bartCircuits.forEach((c, i) => { %>
+            <div class="vt-circuit-row bart-row" data-index="<%= i %>">
+              <div class="vt-circuit-row__h">
+                <div class="vt-circuit-row__num bnum"><%= i + 1 %></div>
+                <div class="vt-circuit-row__title bname"><%= t('settings.master') %> <%= i + 1 %></div>
+                <span class="vt-circuit-row__lanes-badge bart-lanes-badge"></span>
+                <% if (bartCircuits.length > 1) { %>
+                  <button type="button" class="vt-circuit-row__x btn-remove-bart" data-index="<%= i %>" title="<%= t('client.common.eliminar') %>">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M6 6l12 12M18 6L6 18"/></svg>
+                  </button>
+                <% } %>
+              </div>
+              <div class="vt-fields vt-fields--2 circuit-row__body">
+                <div class="vt-field">
+                  <label><%= t('client.settings.nombre_ble_del_master') %></label>
+                  <input class="vt-inp is-mono bart-name-input" type="text" name="bart_master_name" placeholder="BART_TRACK<%= i + 1 %>" value="<%= c.name || '' %>">
+                </div>
+                <div class="vt-field">
+                  <label><%= t('client.settings.n_de_carriles') %></label>
+                  <input class="vt-inp is-mono bart-lanes-input" type="number" name="bart_master_lanes" min="2" max="32" value="<%= c.lanes || 8 %>">
+                </div>
+              </div>
+              <div class="vt-fields vt-fields--2 bart-tcp-fields" style="margin-top:14px<%= (cfg.bart_transport || 'ble') === 'tcp' ? '' : ';display:none' %>">
+                <div class="vt-field">
+                  <label><%= t('client.settings.host_del_puente') %></label>
+                  <input class="vt-inp is-mono" type="text" name="bart_master_host" placeholder="127.0.0.1" value="<%= c.host || '127.0.0.1' %>">
+                </div>
+                <div class="vt-field">
+                  <label><%= t('client.settings.puerto') %></label>
+                  <input class="vt-inp is-mono" type="number" name="bart_master_port" min="1" max="65535" value="<%= c.port || 9300 %>">
+                </div>
+              </div>
+            </div>
+          <% }) %>
+        </div>
+      </div>
+
+      <!-- ── DS-300 agrupador (varias cajas por un puerto) ────────────────── -->
+      <div id="aggSettings" style="display:none;margin-top:26px">
+        <div class="vt-sub">
+          <div>
+            <h3><%= t('settings.ds_300_agrupador') %></h3>
+            <p class="vt-sub__p">
+              <%= t('settings.un_aparato_agrupa_varias_cajas_ds_300_y_las') %>
+            </p>
+          </div>
+          <div class="vt-sub__actions">
+            <button type="button" class="vt-btn vt-btn--ghost vt-btn--sm" id="refreshPortsAgg" title="<%= t('settings.buscar_puertos_com') %>">
+              <svg viewBox="0 0 24 24"><path d="M21 12a9 9 0 1 1-2.6-6.4"/><path d="M21 3v5h-5"/></svg>
+              <%= t('settings.buscar_puertos') %>
+            </button>
+          </div>
+        </div>
+
+        <div class="vt-fields vt-fields--3" style="margin-top:14px">
+          <div class="vt-field circuit-row__field--port">
+            <label><%= t('client.settings.puerto') %></label>
+            <div class="vt-selw">
+              <select class="port-select" name="agg_port" id="aggPortSelect">
+                <option value="">— <%= t('client.settings.seleccionar') %> —</option>
+                <% ports.forEach(p => { %>
+                  <option value="<%= p.path %>" <%= cfg.agg_port === p.path ? 'selected' : '' %>>
+                    <%= p.path %><%= p.manufacturer ? ` — ${p.manufacturer}` : '' %>
+                  </option>
+                <% }) %>
+                <% if (cfg.agg_port && !ports.find(p => p.path === cfg.agg_port)) { %>
+                  <option value="<%= cfg.agg_port %>" selected><%= cfg.agg_port %></option>
+                <% } %>
+              </select>
+            </div>
+            <% const _aggCustomPort = cfg.agg_port && !ports.find(p => p.path === cfg.agg_port); %>
+            <button type="button" class="port-manual-toggle <%= _aggCustomPort ? 'is-open' : '' %>" aria-expanded="<%= _aggCustomPort ? 'true' : 'false' %>">
+              <svg class="port-manual-toggle__chev" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 6l6 6-6 6"/></svg>
+              <span><%= t('client.settings.escribir_el_path_a_mano') %></span>
+            </button>
+            <input class="vt-inp is-mono port-manual <%= _aggCustomPort ? '' : 'is-hidden' %>" type="text"
+              placeholder="<%= t('client.settings.p_ej_dev_ttys003') %>"
+              value="<%= cfg.agg_port || '' %>" style="margin-top:7px;font-size:13px">
+          </div>
+          <% const _aggBauds = [9600,19200,38400,56000,57600,115200,230400,460800,921600]; %>
+          <% const _aggCur = Number(cfg.agg_baud || 57600); %>
+          <% const _aggCustomBaud = !_aggBauds.includes(_aggCur); %>
+          <div class="vt-field js-baud-field">
+            <label>Baud rate</label>
+            <div class="vt-selw">
+              <select class="baud-select" name="agg_baud">
+                <% if (_aggCustomBaud) { %><option value="<%= _aggCur %>" selected><%= _aggCur %></option><% } %>
+                <% _aggBauds.forEach(b => { %>
+                  <option value="<%= b %>" <%= _aggCur === b ? 'selected' : '' %>><%= b %></option>
+                <% }) %>
+              </select>
+            </div>
+            <button type="button" class="port-manual-toggle baud-manual-toggle <%= _aggCustomBaud ? 'is-open' : '' %>" aria-expanded="<%= _aggCustomBaud ? 'true' : 'false' %>">
+              <svg class="port-manual-toggle__chev" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 6l6 6-6 6"/></svg>
+              <span><%= t('client.settings.escribir_a_mano') %></span>
+            </button>
+            <input class="vt-inp is-mono baud-manual <%= _aggCustomBaud ? '' : 'is-hidden' %>" type="number"
+              min="300" max="921600" step="1" placeholder="<%= t('client.settings.p_ej_57600') %>"
+              value="<%= _aggCur %>" style="margin-top:7px;font-size:13px">
+          </div>
+          <div class="vt-field">
+            <label><%= t('settings.n_de_cajas_en_el_puerto') %></label>
+            <div class="vt-selw">
+              <select name="agg_boxes" id="aggBoxes">
+                <% [2, 3, 4].forEach(v => { %>
+                  <option value="<%= v %>" <%= String(cfg.agg_boxes || '2') === String(v) ? 'selected' : '' %>><%= v %> (<%= v * 8 %> <%= t('client.common.carriles') %>)</option>
+                <% }) %>
+              </select>
+            </div>
+          </div>
+        </div>
+        <div class="vt-hint" style="margin-top:10px">
+          <%= t('settings.las_cajas_deben_estar_direccionadas_en_orden_1') %>
+        </div>
+      </div>
+
+      <!-- ── Interface TicTac (TicTacSlot Cuentavueltas) ─────────────────── -->
+      <div id="tictacSettings" style="display:none;margin-top:26px">
+        <div class="vt-sub">
+          <div>
+            <h3>TicTac</h3>
+            <p class="vt-sub__p"><%= t('settings.tictac_explicacion') %></p>
+          </div>
+          <div class="vt-sub__actions">
+            <button type="button" class="vt-btn vt-btn--ghost vt-btn--sm" id="refreshPortsTictac" title="<%= t('settings.buscar_puertos_com') %>">
+              <svg viewBox="0 0 24 24"><path d="M21 12a9 9 0 1 1-2.6-6.4"/><path d="M21 3v5h-5"/></svg>
+              <%= t('settings.buscar_puertos') %>
+            </button>
+          </div>
+        </div>
+
+        <% const _ttTransport = cfg.tictac_transport === 'serial' ? 'serial' : 'usb'; %>
+        <div class="vt-fields vt-fields--3" style="margin-top:14px">
+          <div class="vt-field">
+            <label><%= t('settings.tictac_conexion') %></label>
+            <div class="vt-selw">
+              <select name="tictac_transport" id="tictacTransport">
+                <option value="usb" <%= _ttTransport === 'usb' ? 'selected' : '' %>><%= t('settings.tictac_conexion_usb') %></option>
+                <option value="serial" <%= _ttTransport === 'serial' ? 'selected' : '' %>><%= t('settings.tictac_conexion_serie') %></option>
+              </select>
+            </div>
+          </div>
+          <div class="vt-field">
+            <label><%= t('client.settings.n_de_carriles') %></label>
+            <input class="vt-inp is-mono" type="number" name="tictac_lanes" min="1" max="8" value="<%= cfg.tictac_lanes || 8 %>">
+          </div>
+          <div class="vt-field" id="tictacUsbStatusField">
+            <label><%= t('settings.tictac_estado') %></label>
+            <div class="vt-hint" id="tictacUsbStatus" style="margin:0">…</div>
+          </div>
+        </div>
+
+        <div class="vt-fields vt-fields--3" id="tictacSerialFields" style="margin-top:14px">
+          <div class="vt-field circuit-row__field--port">
+            <label><%= t('client.settings.puerto') %></label>
+            <div class="vt-selw">
+              <select class="port-select" name="tictac_port" id="tictacPortSelect">
+                <option value="">— <%= t('client.settings.seleccionar') %> —</option>
+                <% ports.forEach(p => { %>
+                  <option value="<%= p.path %>" <%= cfg.tictac_port === p.path ? 'selected' : '' %>>
+                    <%= p.path %><%= p.manufacturer ? ` — ${p.manufacturer}` : '' %>
+                  </option>
+                <% }) %>
+                <% if (cfg.tictac_port && !ports.find(p => p.path === cfg.tictac_port)) { %>
+                  <option value="<%= cfg.tictac_port %>" selected><%= cfg.tictac_port %></option>
+                <% } %>
+              </select>
+            </div>
+            <% const _ttCustomPort = cfg.tictac_port && !ports.find(p => p.path === cfg.tictac_port); %>
+            <button type="button" class="port-manual-toggle <%= _ttCustomPort ? 'is-open' : '' %>" aria-expanded="<%= _ttCustomPort ? 'true' : 'false' %>">
+              <svg class="port-manual-toggle__chev" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 6l6 6-6 6"/></svg>
+              <span><%= t('client.settings.escribir_el_path_a_mano') %></span>
+            </button>
+            <input class="vt-inp is-mono port-manual <%= _ttCustomPort ? '' : 'is-hidden' %>" type="text"
+              placeholder="<%= t('client.settings.p_ej_dev_ttys003') %>"
+              value="<%= cfg.tictac_port || '' %>" style="margin-top:7px;font-size:13px">
+          </div>
+          <input type="hidden" name="tictac_baud" value="<%= cfg.tictac_baud || 57600 %>">
+        </div>
+      </div>
+
+      <!-- ── Multi-circuit serial ───────────────────────────────────────── -->
+      <div id="serialSettings" style="display:none;margin-top:26px">
+
+        <div class="vt-sub">
+          <div>
+            <h3><%= t('settings.circuitos_ds_300') %></h3>
+            <p class="vt-sub__p">
+              <%= t('settings.cada_ds_300_controla_un_circuito_independiente') %>
+            </p>
+          </div>
+          <div class="vt-sub__actions">
+            <button type="button" class="vt-btn vt-btn--ghost vt-btn--sm" id="refreshPorts" title="<%= t('settings.buscar_puertos_com') %>">
+              <svg viewBox="0 0 24 24"><path d="M21 12a9 9 0 1 1-2.6-6.4"/><path d="M21 3v5h-5"/></svg>
+              <%= t('settings.buscar_puertos') %>
+            </button>
+            <button type="button" class="vt-btn vt-btn--ghost vt-btn--sm" id="addCircuit">
+              <svg viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg>
+              <%= t('settings.anadir_circuito') %>
+            </button>
+          </div>
+        </div>
+
+        <div id="circuitList">
+          <% let globalLaneStart = 1; %>
+          <% circuits.forEach((c, i) => { %>
+            <div class="vt-circuit-row circuit-row" data-index="<%= i %>">
+              <div class="vt-circuit-row__h">
+                <div class="vt-circuit-row__num cnum"><%= i + 1 %></div>
+                <div class="vt-circuit-row__title cname"><%= t('client.common.circuito') %> <%= i + 1 %></div>
+                <span class="vt-circuit-row__lanes-badge circuit-row__lanes-badge">
+                  <%= t('common.carriles') %>&nbsp;<%= globalLaneStart %>–<%= globalLaneStart + (c.lanes || 8) - 1 %>
+                </span>
+                <% if (multiCircuit) { %>
+                  <button type="button" class="vt-circuit-row__x btn-remove-circuit" data-index="<%= i %>" title="<%= t('client.common.eliminar') %>">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M6 6l12 12M18 6L6 18"/></svg>
+                  </button>
+                <% } %>
+              </div>
+
+              <div class="vt-group-lbl"><%= t('client.settings.conexion_serie') %></div>
+              <div class="vt-fields vt-fields--3 circuit-row__body">
+                <% const _model = c.model || 'ds300'; %>
+                <div class="vt-field circuit-row__field circuit-row__field--model">
+                  <label><%= t('client.settings.modelo') %></label>
+                  <div class="vt-selw">
+                    <select class="model-select" name="circuit_model">
+                      <% Object.entries(dsModels).forEach(([k, m]) => { %>
+                        <option value="<%= k %>" data-baud="<%= m.baud %>" <%= _model === k ? 'selected' : '' %>><%= m.label %></option>
+                      <% }) %>
+                    </select>
+                  </div>
+                </div>
+                <div class="vt-field circuit-row__field circuit-row__field--port">
+                  <label><%= t('client.settings.puerto') %></label>
+                  <div class="vt-selw">
+                    <select class="port-select" name="circuit_port">
+                      <option value="">— <%= t('client.settings.seleccionar') %> —</option>
+                      <% ports.forEach(p => { %>
+                        <option value="<%= p.path %>" <%= c.port === p.path ? 'selected' : '' %>>
+                          <%= p.path %><%= p.manufacturer ? ` — ${p.manufacturer}` : '' %>
+                        </option>
+                      <% }) %>
+                      <% if (c.port && !ports.find(p => p.path === c.port)) { %>
+                        <option value="<%= c.port %>" selected><%= c.port %></option>
+                      <% } %>
+                    </select>
+                  </div>
+                  <% const isCustomPort = c.port && !ports.find(p => p.path === c.port); %>
+                  <button type="button" class="port-manual-toggle <%= isCustomPort ? 'is-open' : '' %>" aria-expanded="<%= isCustomPort ? 'true' : 'false' %>">
+                    <svg class="port-manual-toggle__chev" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 6l6 6-6 6"/></svg>
+                    <span><%= t('client.settings.escribir_el_path_a_mano') %></span>
+                  </button>
+                  <input class="vt-inp is-mono port-manual <%= isCustomPort ? '' : 'is-hidden' %>" type="text"
+                    placeholder="<%= t('client.settings.p_ej_dev_ttys003') %>"
+                    value="<%= c.port || '' %>" style="margin-top:7px;font-size:13px">
+                </div>
+                <% const _bauds = [4800,9600,19200,38400,56000,57600,115200,230400,460800,921600]; %>
+                <% const _curBaud = Number(c.baud || 57600); %>
+                <% const _customBaud = !_bauds.includes(_curBaud); %>
+                <div class="vt-field circuit-row__field circuit-row__field--baud js-baud-field">
+                  <label>Baud rate</label>
+                  <div class="vt-selw">
+                    <select class="baud-select" name="circuit_baud" required>
+                      <% if (_customBaud) { %><option value="<%= _curBaud %>" selected><%= _curBaud %></option><% } %>
+                      <% _bauds.forEach(b => { %>
+                        <option value="<%= b %>" <%= _curBaud === b ? 'selected' : '' %>><%= b %></option>
+                      <% }) %>
+                    </select>
+                  </div>
+                  <button type="button" class="port-manual-toggle baud-manual-toggle <%= _customBaud ? 'is-open' : '' %>" aria-expanded="<%= _customBaud ? 'true' : 'false' %>">
+                    <svg class="port-manual-toggle__chev" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 6l6 6-6 6"/></svg>
+                    <span><%= t('client.settings.escribir_a_mano') %></span>
+                  </button>
+                  <input class="vt-inp is-mono baud-manual <%= _customBaud ? '' : 'is-hidden' %>" type="number"
+                    min="300" max="921600" step="1" placeholder="<%= t('client.settings.p_ej_57600') %>"
+                    value="<%= _curBaud %>" style="margin-top:7px;font-size:13px">
+                </div>
+              </div>
+
+              <details class="vt-adv circuit-row__adv">
+                <summary>
+                  <svg class="vt-adv__chev" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 6l6 6-6 6"/></svg>
+                  <%= t('client.settings.opciones_avanzadas_del_puerto') %>
+                </summary>
+                <div class="vt-adv__body vt-fields vt-fields--3">
+                  <div class="vt-field circuit-row__field">
+                    <label>Data bits</label>
+                    <div class="vt-selw">
+                      <select name="circuit_databits">
+                        <% [7, 8].forEach(v => { %>
+                          <option value="<%= v %>" <%= (c.dataBits || 8) == v ? 'selected' : '' %>><%= v %></option>
+                        <% }) %>
+                      </select>
+                    </div>
+                  </div>
+                  <div class="vt-field circuit-row__field">
+                    <label><%= t('client.settings.paridad') %></label>
+                    <div class="vt-selw">
+                      <select name="circuit_parity">
+                        <% ['none','even','odd'].forEach(v => { %>
+                          <option value="<%= v %>" <%= (c.parity || 'none') === v ? 'selected' : '' %>><%= v %></option>
+                        <% }) %>
+                      </select>
+                    </div>
+                  </div>
+                  <div class="vt-field circuit-row__field">
+                    <label>Stop bits</label>
+                    <div class="vt-selw">
+                      <select name="circuit_stopbits">
+                        <% [1, 2].forEach(v => { %>
+                          <option value="<%= v %>" <%= (c.stopBits || 1) == v ? 'selected' : '' %>><%= v %></option>
+                        <% }) %>
+                      </select>
+                    </div>
+                  </div>
+                  <div class="vt-field circuit-row__field">
+                    <label><%= t('client.settings.control_de_flujo') %></label>
+                    <div class="vt-selw">
+                      <select name="circuit_flow">
+                        <% ['none','rtscts','xonxoff'].forEach(v => { %>
+                          <option value="<%= v %>" <%= (c.flowControl || 'none') === v ? 'selected' : '' %>><%= v %></option>
+                        <% }) %>
+                      </select>
+                    </div>
+                  </div>
+                </div>
+              </details>
+
+              <div class="vt-divider"></div>
+
+              <div class="vt-group-lbl"><%= t('client.common.asignacion_de_carriles') %></div>
+              <div class="vt-fields vt-fields--2">
+                <div class="vt-field circuit-row__field circuit-row__field--circuit">
+                  <label><%= t('client.common.circuito') %></label>
+                  <div class="vt-selw">
+                    <select class="circuit-ref-select" name="circuit_ref">
+                      <option value="">— <%= t('client.common.manual') %> —</option>
+                      <% allCircuits.forEach(ac => { %>
+                        <option value="<%= ac.id %>" data-lanes="<%= ac.lanes_count %>"
+                          data-config='<%= (ac.circuits_config && ac.circuits_config !== "[]") ? ac.circuits_config : ("[" + ac.lanes_count + "]") %>'
+                          <%= String(c.circuit_id || '') === String(ac.id) ? 'selected' : '' %>>
+                          <%= ac.name %> (<%= ac.lanes_count %>)
+                        </option>
+                      <% }) %>
+                    </select>
+                  </div>
+                </div>
+                <div class="vt-field circuit-row__field circuit-row__field--lanes">
+                  <label><%= t('client.settings.n_de_carriles') %></label>
+                  <input class="vt-inp is-mono circuit-lanes-input" type="number" name="circuit_lanes" min="2" max="8"
+                    value="<%= c.lanes || 8 %>" <%= c.circuit_id ? 'readonly' : '' %>>
+                  <input type="hidden" class="circuit-sub-input" name="circuit_sub" value="<%= (c.circuit_id != null && c.sub_index != null) ? c.sub_index : '' %>">
+                </div>
+              </div>
+            </div>
+            <% globalLaneStart += (c.lanes || 8); %>
+          <% }) %>
+        </div>
+
+
+        <details>
+          <summary>
+            <span class="ar"></span>
+            <svg viewBox="0 0 24 24"><path d="M4 7h16M4 12h16M4 17h16"/></svg>
+            <%= t('settings.avanzado_timing_del_parser_ds_300') %>
+          </summary>
+          <div class="vt-disc-body">
+            <div class="vt-field" style="max-width:160px;margin-top:10px">
+              <label>FRAME_GAP_MS</label>
+              <input class="vt-inp is-mono" type="number" name="serial_frame_gap_ms" min="10" max="500" value="<%= cfg.serial_frame_gap_ms || 75 %>">
+            </div>
+            <div class="vt-hint">
+              <%= t('settings.silencio_ms_entre_bytes_que_separa_dos_tramas') %>
+            </div>
+          </div>
+        </details>
+      </div>
+        </section>
+
+        <!-- ══ Preferencias ══════════════════════════════════════════════ -->
+        <section class="st-sec" data-sec="live">
+          <header class="st-sec__h">
+            <h2><%= t('settings.preferencias') %></h2>
+            <p><%= t('settings.como_prefieres_ver_la_informacion_de_la_carrera') %></p>
+          </header>
+          <div class="st-card">
+            <div class="st-row st-row--wrap">
+              <div class="st-row__txt">
+                <div class="st-row__t"><%= t('settings.orden_del_directo') %></div>
+                <div class="st-row__d"><%= t('settings.como_se_ordenan_tarjetas_y_filas_y_que_posicion') %></div>
+              </div>
+              <div class="vt-selw st-row__ctl st-row__ctl--wide">
+                <select name="live_order" aria-label="<%= t('settings.ordenar_por') %>">
+                  <option value="projected" <%= cfg.live_order !== 'laps' ? 'selected' : '' %>><%= t('settings.clasificacion_estimada_recomendado') %></option>
+                  <option value="laps" <%= cfg.live_order === 'laps' ? 'selected' : '' %>><%= t('settings.vueltas_reales_a_igualdad_menos_tiempo_total') %></option>
+                </select>
+              </div>
+            </div>
+          </div>
+          <div class="st-card">
+            <div class="st-row st-row--wrap">
+              <div class="st-row__txt">
+                <div class="st-row__t"><%= t('common.modo_de_la_app') %></div>
+                <div class="st-row__d"><%= t('settings.basico_el_inicio_solo_muestra_entreno_libre') %></div>
+              </div>
+              <div class="vt-selw st-row__ctl st-row__ctl--wide">
+                <select data-pref="ui_mode" aria-label="<%= t('common.modo_de_la_app') %>">
+                  <option value="advanced" <%= uiMode === 'advanced' ? 'selected' : '' %>><%= t('settings.avanzado_todo') %></option>
+                  <option value="basic" <%= uiMode === 'basic' ? 'selected' : '' %>><%= t('common.basico') %></option>
+                </select>
+              </div>
+            </div>
+            <div class="st-row st-row--wrap">
+              <div class="st-row__txt">
+                <div class="st-row__t"><%= t('settings.historial_de_vueltas_en_entrenos') %></div>
+                <div class="st-row__d"><%= t('settings.las_10_vueltas_que_muestra_cada_carril_en_la') %></div>
+              </div>
+              <div class="vt-selw st-row__ctl st-row__ctl--wide">
+                <select data-pref="training_history_mode" aria-label="<%= t('settings.historial_de_vueltas_en_entrenos') %>">
+                  <option value="recent" <%= trainingHistoryMode === 'recent' ? 'selected' : '' %>><%= t('settings.las_10_ultimas_la_mas_reciente_arriba') %></option>
+                  <option value="best" <%= trainingHistoryMode === 'best' ? 'selected' : '' %>><%= t('settings.las_10_mejores_de_mejor_a_peor') %></option>
+                </select>
+              </div>
+            </div>
+            <div class="st-row st-row--wrap">
+              <div class="st-row__txt">
+                <div class="st-row__t"><%= t('settings.correccion_manual_de_la_coma') %></div>
+                <div class="st-row__d"><%= t('settings.la_coma_la_fraccion_de_vuelta_de_cada_coche_al') %></div>
+              </div>
+              <div class="vt-selw st-row__ctl st-row__ctl--wide">
+                <select data-pref="manual_coma" aria-label="<%= t('settings.correccion_manual_de_la_coma') %>">
+                  <option value="auto" <%= manualComa === 'auto' ? 'selected' : '' %>><%= t('settings.automatica_recomendado') %></option>
+                  <option value="manual" <%= manualComa === 'manual' ? 'selected' : '' %>><%= t('settings.permitir_corregirla_a_mano') %></option>
+                </select>
+              </div>
+            </div>
+            <div class="st-row st-row--wrap">
+              <div class="st-row__txt">
+                <div class="st-row__t"><%= t('settings.espera_de_cruces_tras_el_final_s') %></div>
+                <div class="st-row__d"><%= t('settings.tiempo_durante_el_que_al_terminar_la_manga_un') %></div>
+              </div>
+              <input type="number" min="0" max="10" step="0.1" class="vt-inp is-mono st-row__ctl" value="<%= (lateCrossingGraceMs / 1000).toString() %>" data-pref-ms="late_crossing_grace_ms" aria-label="<%= t('settings.espera_de_cruces_tras_el_final_s') %>">
+            </div>
+            <div class="st-row st-row--hint" hidden><div class="st-row__d" id="prefsMsg" role="status"></div></div>
+          </div>
+          <%
+            const gLaneColors = globalLaneColors();
+          %>
+          <div class="st-card">
+            <div class="st-row st-row--wrap">
+              <div class="st-row__txt">
+                <div class="st-row__t"><%= t('settings.colores_de_carril') %></div>
+                <div class="st-row__d"><%= t('settings.los_que_usan_todas_las_pantallas_cuando_no_hay') %></div>
+              </div>
+            </div>
+            <div class="st-row st-row--wrap" style="display:block">
+              <div class="lc-grid" id="globalLaneColorsGrid">
+                <% for (let i = 1; i <= gLaneColors.length; i++) { const c = gLaneColors[i - 1]; %>
+                  <label class="lc-swatch" style="background:<%= c %>;color:<%= laneInk(c) %>">
+                    <%= i %>
+                    <input type="color" value="<%= c %>" aria-label="<%= (t('common.color_del_carril')) + i %>">
+                  </label>
+                <% } %>
+              </div>
+              <div class="lc-actions">
+                <button type="button" class="vt-btn vt-btn--primary vt-btn--sm" id="laneColorsSave" disabled><%= t('settings.guardar_colores') %></button>
+                <button type="button" class="vt-btn vt-btn--ghost vt-btn--sm" id="laneColorsDefault"><%= t('settings.colores_de_fabrica') %></button>
+                <span class="st-row__d" id="laneColorsMsg" role="status"></span>
+              </div>
+            </div>
+          </div>
+          <div class="st-card" id="clubCard">
+            <div class="st-row">
+              <div class="st-row__txt">
+                <div class="st-row__t"><%= t('settings.club_titulo') %></div>
+                <div class="st-row__d"><%= t('settings.club_descripcion') %></div>
+              </div>
+              <button type="button" class="vt-switch <%= clubBrand.enabled ? 'is-on' : '' %>" id="clubSwitch" role="switch" aria-checked="<%= clubBrand.enabled %>" aria-label="<%= t('settings.club_usar') %>"></button>
+            </div>
+            <div class="st-row st-row--wrap">
+              <div class="st-row__txt">
+                <div class="st-row__t st-row__t--sm"><%= t('settings.club_nombre') %></div>
+              </div>
+              <input type="text" class="vt-inp st-row__ctl st-row__ctl--wide" id="clubName" maxlength="80" value="<%= clubBrand.name %>" placeholder="<%= t('settings.club_nombre_ph') %>" aria-label="<%= t('settings.club_nombre') %>">
+            </div>
+            <div class="st-row st-row--wrap">
+              <div class="st-row__txt">
+                <div class="st-row__t st-row__t--sm"><%= t('settings.club_logo') %></div>
+                <div class="st-row__d"><%= t('settings.club_logo_d') %></div>
+              </div>
+              <div class="club-logo st-row__ctl st-row__ctl--wide">
+                <div class="club-logo__box" id="clubLogoBox">
+                  <img id="clubLogoImg" alt="" <%- clubBrand.logo ? `src="/club/logo?v=${clubBrand.version}"` : 'hidden' %>>
+                  <span id="clubLogoEmpty" class="st-row__d" <%= clubBrand.logo ? 'hidden' : '' %>><%= t('settings.club_sin_logo') %></span>
+                </div>
+                <input type="file" id="clubLogoFile" accept="image/*" hidden>
+                <button type="button" class="vt-btn vt-btn--ghost vt-btn--sm" id="clubLogoPick"><%= t('settings.club_elegir_logo') %></button>
+                <button type="button" class="vt-btn vt-btn--ghost vt-btn--sm" id="clubLogoRemove" <%= clubBrand.logo ? '' : 'hidden' %>><%= t('settings.club_quitar_logo') %></button>
+              </div>
+            </div>
+            <div class="st-row st-row--wrap" style="display:block">
+              <div class="lc-actions" style="margin-top:0">
+                <button type="button" class="vt-btn vt-btn--primary vt-btn--sm" id="clubSave" disabled><%= t('actions.save') %></button>
+                <span class="st-row__d" id="clubMsg" role="status"></span>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <!-- ══ Ventanas y pantallas (solo app de escritorio) ═══════════════ -->
+        <section class="st-sec" data-sec="win">
+          <header class="st-sec__h">
+            <h2><%= t('settings.ventanas_y_pantallas') %></h2>
+            <p><%= t('settings.ventanas_intro') %></p>
+          </header>
+          <div class="st-card">
+            <div class="st-row st-row--hint" id="winNoDesktop" hidden><div class="st-row__d"><%= t('settings.ventanas_solo_escritorio') %></div></div>
+            <div id="winRows" hidden>
+              <% ['training', 'live', 'tv', 'pole', 'lemans'].forEach(ty => { %>
+                <div class="st-row st-row--wrap" data-wtype="<%= ty %>">
+                  <div class="st-row__txt">
+                    <div class="st-row__t"><%= t('settings.ventana_' + ty) %></div>
+                  </div>
+                  <div class="st-row__ctl st-row__ctl--wide" style="display:flex;gap:8px;flex-wrap:wrap">
+                    <div class="vt-selw" style="flex:1 1 200px"><select data-w="display" aria-label="<%= t('settings.ventana_pantalla') %>"></select></div>
+                    <div class="vt-selw" style="flex:1 1 150px">
+                      <select data-w="mode" aria-label="<%= t('settings.ventana_modo') %>">
+                        <option value="normal"><%= t('client.settings.modo_normal') %></option>
+                        <option value="maximized"><%= t('client.settings.modo_maximizada') %></option>
+                        <option value="fullscreen"><%= t('client.settings.modo_completa') %></option>
+                      </select>
+                    </div>
+                  </div>
+                </div>
+                <% if (ty === 'training') { %>
+                  <div class="st-row">
+                    <div class="st-row__txt">
+                      <div class="st-row__t st-row__t--sm"><%= t('settings.ventana_abrir_al_iniciar') %></div>
+                      <div class="st-row__d"><%= t('settings.ventana_abrir_al_iniciar_d') %></div>
+                    </div>
+                    <button type="button" class="vt-switch" id="winAutostart" role="switch" aria-checked="false" aria-label="<%= t('settings.ventana_abrir_al_iniciar') %>"></button>
+                  </div>
+                <% } %>
+              <% }) %>
+              <div class="st-row st-row--hint" hidden><div class="st-row__d" id="winMsg" role="status"></div></div>
+            </div>
+          </div>
+          <div class="st-card" id="winIdentifyCard" hidden>
+            <div class="st-row st-row--wrap">
+              <div class="st-row__txt">
+                <div class="st-row__t"><%= t('settings.ventanas_identificar') %></div>
+                <div class="st-row__d"><%= t('settings.ventanas_identificar_d') %></div>
+              </div>
+              <button type="button" class="vt-btn vt-btn--ghost vt-btn--sm" id="winIdentify"><%= t('settings.ventanas_identificar') %></button>
+            </div>
+            <div class="st-row st-row--hint"><div class="st-row__d"><%= t('settings.ventanas_nota') %></div></div>
+          </div>
+        </section>
+
+        <!-- ══ Red local ═════════════════════════════════════════════════ -->
+        <section class="st-sec" data-sec="net">
+          <header class="st-sec__h">
+            <h2><%= t('settings.red_local') %></h2>
+            <p><%= t('settings.quien_puede_entrar_a_pitwall_desde_la_red_del') %></p>
+          </header>
+
+          <div class="st-card">
+            <div class="st-row st-row--wrap">
+              <div class="st-row__txt">
+                <div class="st-row__t"><%= t('settings.interfaz_de_red') %> <%- restartChip %></div>
+                <div class="st-row__d"><%= t('settings.todas_lo_hace_accesible_por_cable_y_wifi_a_la') %></div>
+              </div>
+              <div class="vt-selw st-row__ctl st-row__ctl--wide">
+                <select name="server_bind_iface" data-restart aria-label="<%= t('settings.interfaz_de_red') %>">
+                  <option value="" <%= !bindIface ? 'selected' : '' %>><%= t('settings.todas_las_interfaces_recomendado') %></option>
+                  <% (netInterfaces || []).forEach(function (i) { %>
+                    <option value="<%= i.name %>" <%= bindIface === i.name ? 'selected' : '' %>><%= i.name %> — <%= i.ip %></option>
+                  <% }); %>
+                </select>
+              </div>
+            </div>
+            <div class="st-row st-row--wrap st-row--top">
+              <div class="st-row__txt"><div class="st-row__t st-row__t--sm"><%= t('settings.direcciones_ahora') %></div></div>
+              <div class="st-addrs">
+                <% if (!serverIps || serverIps.length === 0) { %>
+                  <span class="st-row__d"><%= t('settings.sin_interfaces_de_red_detectadas') %></span>
+                <% } else { %>
+                  <% serverIps.forEach(function (i) { %>
+                    <div>http://<%= i.ip %>:<%= serverPort %> <span>(<%= i.name %>)</span></div>
+                  <% }); %>
+                <% } %>
+              </div>
+            </div>
+          </div>
+
+          <div class="st-card">
+            <div class="st-row">
+              <div class="st-row__txt">
+                <div class="st-row__t"><%= t('settings.restringir_acceso_web') %></div>
+                <div class="st-row__d"><%= t('settings.solo_este_equipo_localhost_y_las_ips_de_la') %></div>
+              </div>
+              <button type="button" class="vt-switch <%= cfg.access_restrict_enabled !== '0' ? 'is-on' : '' %>" id="accessSwitch" data-switch="accessInput" role="switch" aria-checked="<%= cfg.access_restrict_enabled !== '0' %>" aria-label="<%= t('settings.restringir_acceso_web') %>"></button>
+              <input type="hidden" name="access_restrict_enabled" id="accessInput" value="<%= cfg.access_restrict_enabled !== '0' ? '1' : '' %>">
+            </div>
+            <div class="st-row st-row--wrap st-row--top" data-show-when="accessInput" <%= cfg.access_restrict_enabled !== '0' ? '' : 'hidden' %>>
+              <div class="st-row__txt">
+                <label class="st-row__t st-row__t--sm" for="accessAllowlist"><%= t('settings.ips_o_rangos_permitidos') %></label>
+                <div class="st-row__d"><%= t('settings.uno_por_linea_admite_cidr_p_ej_192_168_1_50_o') %></div>
+              </div>
+              <textarea name="access_allowlist" id="accessAllowlist" class="vt-inp is-mono st-row__ctl st-row__ctl--wide" rows="4"
+                placeholder="192.168.1.50&#10;192.168.1.0/24"><%= (function(){ try { return JSON.parse(cfg.access_allowlist || '[]').join('\n'); } catch (e) { return ''; } })() %></textarea>
+            </div>
+          </div>
+
+          <div class="st-card">
+            <div class="st-row">
+              <div class="st-row__txt">
+                <div class="st-row__t"><%= t('settings.https_local') %> <%- restartChip %></div>
+                <div class="st-row__d"><%= t('settings.el_escaner_qr_del_control_de_pilotos_usa_la') %></div>
+              </div>
+              <button type="button" class="vt-switch <%= httpsEnabled ? 'is-on' : '' %>" id="httpsSwitch" data-switch="httpsInput" role="switch" aria-checked="<%= !!httpsEnabled %>" aria-label="<%= t('settings.https_local') %>"></button>
+              <input type="hidden" name="https_enabled" id="httpsInput" data-restart value="<%= httpsEnabled ? '1' : '' %>">
+            </div>
+            <div data-show-when="httpsInput" <%= httpsEnabled ? '' : 'hidden' %>>
+              <div class="st-row st-row--wrap">
+                <div class="st-row__txt">
+                  <label class="st-row__t st-row__t--sm" for="httpsPort"><%= t('settings.puerto_https') %></label>
+                  <% if (httpsEnabled && serverIps && serverIps.length) { %>
+                    <div class="st-addrs">
+                      <% serverIps.forEach(function (i) { %>
+                        <div>https://<%= i.ip %>:<%= httpsPort %>/control/shifts <span>(<%= i.name %>)</span></div>
+                      <% }); %>
+                    </div>
+                  <% } %>
+                </div>
+                <input type="number" name="https_port" id="httpsPort" data-restart class="vt-inp is-mono st-row__ctl" min="1" max="65535" value="<%= httpsPort %>">
+              </div>
+              <div class="st-row st-row--wrap">
+                <div class="st-row__txt">
+                  <div class="st-row__t st-row__t--sm"><%= t('settings.certificado_en_los_dispositivos') %></div>
+                  <div class="st-row__d"><%= t('settings.sin_el_el_navegador_avisa_una_vez_conexion_no') %></div>
+                  <% if (caFingerprint) { %>
+                    <div class="st-row__d st-fp"><%= t('settings.huella_sha_256_de_la_ca') %> <%= caFingerprint %></div>
+                  <% } %>
+                </div>
+                <div class="st-btns">
+                  <a class="vt-btn vt-btn--ghost vt-btn--sm" href="/cert" target="_blank"><%= t('settings.instalar_certificado_guia') %></a>
+                  <a class="vt-btn vt-btn--ghost vt-btn--sm" href="/cert/ca" download><%= t('settings.descargar_ca') %></a>
+                </div>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <!-- ══ Seguridad ═════════════════════════════════════════════════ -->
+        <section class="st-sec" data-sec="sec">
+          <header class="st-sec__h">
+            <h2><%= t('settings.seguridad') %></h2>
+            <p><%= t('settings.para_que_quien_no_conoce_el_programa_no_toque') %></p>
+          </header>
+          <div class="st-card">
+            <div class="st-row">
+              <div class="st-row__txt">
+                <div class="st-row__t"><%= t('settings.pedir_contrasena_de_acceso') %></div>
+                <div class="st-row__d"><%= t('settings.se_guarda_al_momento_sin_tocar_la_conexion_del') %></div>
+              </div>
+              <button type="button" class="vt-switch <%= passwordEnabled ? 'is-on' : '' %>" id="pwSwitch" role="switch" aria-checked="<%= passwordEnabled %>" aria-label="<%= t('settings.pedir_contrasena_de_acceso') %>"></button>
+            </div>
+            <div class="st-row st-row--wrap st-row--top" id="pwFields" <%= passwordEnabled ? 'hidden' : '' %>>
+              <div class="st-row__txt">
+                <label class="st-row__t st-row__t--sm" for="pwNew" id="pwFieldsTitle"><%= passwordEnabled ? (t('settings.cambiar_contrasena')) : (t('common.contrasena')) %></label>
+                <div class="st-row__d"><%= t('settings.minimo_4_caracteres_si_se_olvida_arranca') %></div>
+              </div>
+              <div class="st-row__ctl st-row__ctl--wide" style="display:grid;gap:8px">
+                <input type="password" id="pwNew" class="vt-inp" autocomplete="new-password" placeholder="<%= t('settings.contrasena_nueva') %>">
+                <input type="password" id="pwConfirm" class="vt-inp" autocomplete="new-password" placeholder="<%= t('settings.repitela') %>">
+                <button type="button" class="vt-btn vt-btn--primary vt-btn--sm" id="pwSave"><%= passwordEnabled ? (t('settings.cambiar_contrasena')) : (t('settings.activar_con_esta_contrasena')) %></button>
+              </div>
+            </div>
+            <div class="st-row st-row--wrap" id="pwActions" <%= passwordEnabled ? '' : 'hidden' %>>
+              <div class="st-btns">
+                <button type="button" class="vt-btn vt-btn--ghost vt-btn--sm" id="pwChange"><%= t('settings.cambiar_contrasena') %></button>
+                <a class="vt-btn vt-btn--ghost vt-btn--sm" href="/logout"><%= t('settings.cerrar_sesion') %></a>
+              </div>
+            </div>
+            <% if (passwordOverridden) { %>
+              <div class="st-row st-row--hint"><div class="st-row__d"><%= t('settings.pitwall_disable_password_1_esta_puesto_ahora') %></div></div>
+            <% } %>
+            <div class="st-row st-row--hint" hidden><div class="st-row__d" id="pwMsg" role="status"></div></div>
+          </div>
+        </section>
+
+        <!-- ══ Seguimiento online ═══════════════════════════════════════ -->
+        <section class="st-sec" data-sec="web">
+          <header class="st-sec__h">
+            <h2><%= t('settings.seguimiento_online') %></h2>
+            <p><%= t('settings.publica_el_directo_los_resultados_y_lap_con_un') %></p>
+          </header>
+          <div class="st-card">
+            <div class="st-row st-row--wrap">
+              <span class="st-dot st-dot--lg" id="tunnelDot"></span>
+              <div class="st-row__txt">
+                <div class="st-row__t" id="tunnelState"><%= t('settings.comprobando') %></div>
+                <div id="tunnelUrl" class="st-addrs"></div>
+              </div>
+              <div class="st-btns">
+                <button type="button" class="vt-btn vt-btn--primary" id="tunnelStartBtn" onclick="tunnelAction('start')"><%= t('settings.arrancar_tunel') %></button>
+                <button type="button" class="vt-btn vt-btn--ghost" id="tunnelStopBtn" onclick="tunnelAction('stop')"><%= t('common.parar') %></button>
+                <button type="button" class="vt-btn vt-btn--primary" id="tunnelInstallBtn" style="display:none" onclick="tunnelInstall()"><%= t('settings.instalar_cloudflared') %></button>
+              </div>
+            </div>
+            <div class="st-row st-row--hint" id="tunnelHintRow"><div class="st-row__d" id="tunnelHint"></div></div>
+            <div class="st-row st-row--wrap">
+              <div class="st-row__txt">
+                <div class="st-row__t st-row__t--sm"><%= t('common.modo') %></div>
+                <div id="tunnelQuickHelp" class="st-row__d" style="display:none">
+                  <%= t('settings.genera_una_url_aleatoria_trycloudflare_com_al') %>
+                </div>
+              </div>
+              <div class="vt-selw st-row__ctl st-row__ctl--wide">
+                <select name="tunnel_mode" id="tunnelMode" onchange="tunnelModeUi()" aria-label="<%= t('common.modo') %>">
+                  <option value="off"   <%= (cfg.tunnel_mode || 'off') === 'off'   ? 'selected' : '' %>><%= t('settings.desactivado') %></option>
+                  <option value="quick" <%= cfg.tunnel_mode === 'quick' ? 'selected' : '' %>><%= t('settings.rapido_url_temporal_sin_cuenta_ni_dominio') %></option>
+                  <option value="token" <%= cfg.tunnel_mode === 'token' ? 'selected' : '' %>><%= t('settings.cloudflare_propio_token_del_club') %></option>
+                </select>
+              </div>
+            </div>
+            <div id="tunnelTokenFields" style="display:none">
+              <div class="st-row st-row--wrap">
+                <div class="st-row__txt">
+                  <label class="st-row__t st-row__t--sm" for="tunnelToken"><%= t('settings.token_del_tunel') %></label>
+                  <div class="st-row__d">Cloudflare → Zero Trust → Networks → Tunnels</div>
+                </div>
+                <input type="password" name="tunnel_token" id="tunnelToken" class="vt-inp is-mono st-row__ctl st-row__ctl--wide"
+                       placeholder="eyJhIjoi…" value="<%= cfg.tunnel_token || '' %>" autocomplete="off">
+              </div>
+              <div class="st-row st-row--wrap">
+                <div class="st-row__txt">
+                  <label class="st-row__t st-row__t--sm" for="tunnelHost"><%= t('settings.dominio_publico') %></label>
+                  <div class="st-row__d"><%= t('settings.informativo_p_ej_directo_miclub_com') %></div>
+                </div>
+                <input type="text" name="tunnel_hostname" id="tunnelHost" class="vt-inp is-mono st-row__ctl st-row__ctl--wide"
+                       placeholder="directo.miclub.com" value="<%= cfg.tunnel_hostname || '' %>" autocomplete="off">
+              </div>
+              <details class="st-row st-howto">
+                <summary><span class="ar"></span><%= t('settings.como_configurarlo_una_sola_vez') %></summary>
+                <ol>
+                  <li><%= t('settings.entra_en_el') %> <a href="https://one.dash.cloudflare.com/" target="_blank" rel="noopener">Cloudflare Zero Trust dashboard</a> <%= t('settings.cuenta_gratuita_con_tu_dominio_ya_anadido_a') %></li>
+                  <li><b>Networks → Tunnels → Create a tunnel</b> (Cloudflared) · <%= t('settings.dale_un_nombre_p_ej_el_del_club') %></li>
+                  <li><%= t('settings.copia_el') %> <b>token</b> <%= t('settings.del_conector_la_cadena_larga_que_empieza_por') %></li>
+                  <li><%= t('settings.en') %> <b>Public Hostnames</b>, <%= t('settings.anade_el_subdominio_p_ej_directo_miclub_com') %> <code>http://localhost:3000</code>.</li>
+                </ol>
+                <a href="https://developers.cloudflare.com/cloudflare-one/connections/connect-networks/get-started/create-remote-tunnel/" target="_blank" rel="noopener"><%= t('settings.guia_oficial_de_cloudflare_crear_un_tunel_remoto') %></a>
+              </details>
+            </div>
+            <label class="st-row st-check">
+              <input type="checkbox" name="tunnel_autostart" value="1" <%= cfg.tunnel_autostart === '1' ? 'checked' : '' %>>
+              <span><%= t('settings.arrancar_el_tunel_automaticamente_con_pitwall') %></span>
+            </label>
+          </div>
+        </section>
+
+        <!-- ══ Integraciones ═════════════════════════════════════════════ -->
+        <section class="st-sec" data-sec="int">
+          <header class="st-sec__h">
+            <h2><%= t('settings.integraciones') %></h2>
+            <p><%= t('settings.conexion_con_apps_de_terceros') %></p>
+          </header>
+          <div class="st-card">
+            <div class="st-row">
+              <div class="st-row__txt">
+                <div class="st-row__t"><%= t('settings.compatibilidad_infolap') %></div>
+                <div class="st-row__d"><%= t('settings.la_app_movil_de_tic_tac_slot_infolap_se_conecta') %></div>
+              </div>
+              <button type="button" class="vt-switch <%= cfg.infolap_enabled === '1' ? 'is-on' : '' %>" id="infolapSwitch" data-switch="infolapInput" role="switch" aria-checked="<%= cfg.infolap_enabled === '1' %>" aria-label="<%= t('settings.compatibilidad_infolap') %>"></button>
+              <input type="hidden" name="infolap_enabled" id="infolapInput" value="<%= cfg.infolap_enabled === '1' ? '1' : '' %>">
+            </div>
+          </div>
+        </section>
+
+        <!-- ══ Diagnóstico ═══════════════════════════════════════════════ -->
+        <section class="st-sec" data-sec="diag">
+          <header class="st-sec__h">
+            <h2><%= t('settings.diagnostico') %></h2>
+            <p><%= t('settings.herramientas_para_investigar_un_problema') %></p>
+          </header>
+          <div class="st-card">
+            <div class="st-row">
+              <div class="st-row__txt">
+                <div class="st-row__t"><%= t('settings.modo_debug') %></div>
+                <div class="st-row__d"><%= t('settings.registra_tramas_ds_300_crudas_cruces_de_carril') %></div>
+              </div>
+              <button type="button" class="vt-switch <%= cfg.debug_mode === '1' ? 'is-on' : '' %>" id="dbgSwitch" data-switch="dbgInput" role="switch" aria-checked="<%= cfg.debug_mode === '1' %>" aria-label="<%= t('settings.modo_debug') %>"></button>
+              <input type="hidden" name="debug_mode" id="dbgInput" value="<%= cfg.debug_mode === '1' ? '1' : '' %>">
+            </div>
+            <a class="st-row st-row--link" href="/diagnostico/tramas">
+              <div class="st-row__txt">
+                <div class="st-row__t"><%= t('settings.visor_de_tramas_en_vivo') %></div>
+                <div class="st-row__d"><%= t('settings.las_tramas_del_cronometro_segun_llegan') %></div>
+              </div>
+              <svg class="st-chev" viewBox="0 0 24 24"><path d="M9 6l6 6-6 6"/></svg>
+            </a>
+            <a class="st-row st-row--link" href="/diagnostico">
+              <div class="st-row__txt">
+                <div class="st-row__t"><%= t('settings.diagnostico_de_mangas') %></div>
+                <div class="st-row__d"><%= t('settings.mangas_atascadas_activas_o_pendientes') %></div>
+              </div>
+              <svg class="st-chev" viewBox="0 0 24 24"><path d="M9 6l6 6-6 6"/></svg>
+            </a>
+            <% if (rawLog.length > 0) { %>
+              <details class="st-row st-howto">
+                <summary><span class="ar"></span><%= t('settings.ultimos_bytes_recibidos') %></summary>
+                <div class="vt-bytes"><% rawLog.forEach(({ byte }) => { %><%= '0x' + byte.toString(16).padStart(2,'0').toUpperCase() + ' ' %><% }) %></div>
+              </details>
+            <% } %>
+          </div>
+        </section>
+      </div>
+    </div>
+
+    <div class="st-bar" id="stBar">
+      <div class="st-bar__in">
+        <span class="st-dot" id="stBarDot"></span>
+        <span class="st-bar__msg" id="stBarMsg"><%= t('client.settings.sin_cambios') %></span>
+        <span id="stBarRestart" hidden><%- restartChip %></span>
+        <span class="st-top__fill"></span>
+        <a href="/settings" class="vt-btn vt-btn--ghost" id="stDiscard" hidden><%= t('settings.descartar') %></a>
+        <button type="submit" class="vt-btn vt-btn--primary"><%= t('settings.guardar_y_aplicar') %></button>
+      </div>
+    </div>
+  </form>
+</div>
+
+<script src="/js/laneColors.js"></script>
+<script>
+const LANG = "<%= lang %>";
+
+/* ── radio source ── */
+const sim = document.getElementById('optSim');
+const ds  = document.getElementById('optDs');
+const agg = document.getElementById('optAgg');
+const bart = document.getElementById('optBart');
+const tictac = document.getElementById('optTictac');
+const simDiv = document.getElementById('simSettings');
+const serialDiv = document.getElementById('serialSettings');
+const aggDiv = document.getElementById('aggSettings');
+const bartDiv = document.getElementById('bartSettings');
+const tictacDiv = document.getElementById('tictacSettings');
+/* ── TicTac: conexión USB (autodetectada) o puerto serie, y estado de detección ── */
+const tictacTransport = document.getElementById('tictacTransport');
+function pickTictacTransport(){
+  const usb = !tictacTransport || tictacTransport.value === 'usb';
+  const serialFields = document.getElementById('tictacSerialFields');
+  if (serialFields) serialFields.style.display = usb ? 'none' : '';
+  const statusField = document.getElementById('tictacUsbStatusField');
+  if (statusField) statusField.style.visibility = usb ? '' : 'hidden';
+}
+async function refreshTictacStatus(){
+  const el = document.getElementById('tictacUsbStatus');
+  if (!el) return;
+  try {
+    const r = await (await fetch('/api/settings/tictac-devices')).json();
+    if (!r.available)            el.textContent = '⚠ ' + I18N.t('client.settings.tictac_sin_modulo');
+    else if (r.devices.length)   el.textContent = '✓ ' + I18N.t('client.settings.tictac_detectado');
+    else                         el.textContent = '— ' + I18N.t('client.settings.tictac_no_detectado');
+  } catch { el.textContent = '—'; }
+}
+if (tictacTransport) { tictacTransport.addEventListener('change', pickTictacTransport); pickTictacTransport(); }
+
+function pickSource(){
+  const mode = document.querySelector('input[name="serial_mode"]:checked')?.value;
+  sim.classList.toggle('is-sel', mode === 'simulation');
+  ds.classList.toggle('is-sel',  mode === 'serial');
+  if (agg) agg.classList.toggle('is-sel', mode === 'serial_agg');
+  if (bart) bart.classList.toggle('is-sel', mode === 'bart');
+  if (tictac) tictac.classList.toggle('is-sel', mode === 'tictac');
+  simDiv.style.display    = mode === 'simulation' ? '' : 'none';
+  serialDiv.style.display = mode === 'serial'     ? '' : 'none';
+  if (aggDiv)  aggDiv.style.display  = mode === 'serial_agg' ? '' : 'none';
+  if (bartDiv) bartDiv.style.display = mode === 'bart' ? '' : 'none';
+  if (tictacDiv) tictacDiv.style.display = mode === 'tictac' ? '' : 'none';
+  if (mode === 'tictac') refreshTictacStatus();
+}
+document.querySelectorAll('input[name="serial_mode"]').forEach(r => r.addEventListener('change', pickSource));
+pickSource();
+
+/* ── BART: transporte TCP vs BLE (aplica a todos los Master de la lista) ── */
+const bartTransport = document.getElementById('bartTransport');
+function pickBartTransport(){
+  const t = bartTransport ? bartTransport.value : 'ble';
+  document.querySelectorAll('.bart-tcp-fields').forEach(el => { el.style.display = t === 'ble' ? 'none' : ''; });
+}
+if (bartTransport) { bartTransport.addEventListener('change', pickBartTransport); pickBartTransport(); }
+
+/* ── BART: varios Master, numeración de carriles global ── */
+function updateBartBadges(){
+  let offset = 1;
+  document.querySelectorAll('.bart-row').forEach((row, idx) => {
+    const lanes = parseInt(row.querySelector('.bart-lanes-input')?.value || '8', 10) || 8;
+    const badge = row.querySelector('.bart-lanes-badge');
+    const title = row.querySelector('.bname');
+    if (title) title.textContent = (I18N.t('client.settings.master')) + (idx + 1);
+    if (badge) badge.textContent = (I18N.t('client.settings.carriles')) + offset + '–' + (offset + lanes - 1);
+    offset += lanes;
+  });
+}
+function renumberBartRows(){
+  document.querySelectorAll('.bart-row').forEach((row, i) => { row.dataset.index = i; });
+}
+function bartRowHTML(idx){
+  const tcpHidden = (bartTransport && bartTransport.value === 'tcp') ? '' : 'display:none';
+  return `
+    <div class="vt-circuit-row__h">
+      <div class="vt-circuit-row__num bnum"></div>
+      <div class="vt-circuit-row__title bname"></div>
+      <span class="vt-circuit-row__lanes-badge bart-lanes-badge"></span>
+      <button type="button" class="vt-circuit-row__x btn-remove-bart" title="${I18N.t('client.common.eliminar')}">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M6 6l12 12M18 6L6 18"/></svg>
+      </button>
+    </div>
+    <div class="vt-fields vt-fields--2 circuit-row__body">
+      <div class="vt-field">
+        <label>${I18N.t('client.settings.nombre_ble_del_master')}</label>
+        <input class="vt-inp is-mono bart-name-input" type="text" name="bart_master_name" placeholder="BART_TRACK${idx + 1}" value="">
+      </div>
+      <div class="vt-field">
+        <label>${I18N.t('client.settings.n_de_carriles')}</label>
+        <input class="vt-inp is-mono bart-lanes-input" type="number" name="bart_master_lanes" min="2" max="32" value="8">
+      </div>
+    </div>
+    <div class="vt-fields vt-fields--2 bart-tcp-fields" style="margin-top:14px;${tcpHidden}">
+      <div class="vt-field">
+        <label>${I18N.t('client.settings.host_del_puente')}</label>
+        <input class="vt-inp is-mono" type="text" name="bart_master_host" placeholder="127.0.0.1" value="127.0.0.1">
+      </div>
+      <div class="vt-field">
+        <label>${I18N.t('client.settings.puerto')}</label>
+        <input class="vt-inp is-mono" type="number" name="bart_master_port" min="1" max="65535" value="9300">
+      </div>
+    </div>`;
+}
+document.getElementById('addBartMaster')?.addEventListener('click', () => {
+  const list = document.getElementById('bartList');
+  const div = document.createElement('div');
+  div.className = 'vt-circuit-row bart-row';
+  div.innerHTML = bartRowHTML(document.querySelectorAll('.bart-row').length);
+  list.appendChild(div);
+  renumberBartRows();
+  updateBartBadges();
+});
+document.getElementById('bartList')?.addEventListener('click', e => {
+  const btn = e.target.closest('.btn-remove-bart');
+  if (!btn) return;
+  const rows = document.querySelectorAll('.bart-row');
+  if (rows.length > 1) { btn.closest('.bart-row').remove(); renumberBartRows(); updateBartBadges(); }
+});
+document.getElementById('bartList')?.addEventListener('input', e => {
+  if (e.target.classList.contains('bart-lanes-input')) updateBartBadges();
+});
+updateBartBadges();
+
+/* ── interruptores: botón visual + input oculto que viaja en el formulario ── */
+document.querySelectorAll('[data-switch]').forEach(btn => {
+  const input = document.getElementById(btn.dataset.switch);
+  btn.addEventListener('click', () => {
+    const on = btn.classList.toggle('is-on');
+    btn.setAttribute('aria-checked', on ? 'true' : 'false');
+    input.value = on ? '1' : '';
+    document.querySelectorAll(`[data-show-when="${input.id}"]`).forEach(el => { el.hidden = !on; });
+    if (input.id === 'dbgInput') setNavDot('diag', on ? 'warn' : '');
+    input.dispatchEvent(new Event('change', { bubbles: true }));
+  });
+});
+
+function setNavDot(sec, kind){
+  const dot = document.getElementById('navDot-' + sec);
+  if (dot) dot.className = 'st-dot' + (kind ? ' st-dot--' + kind : '');
+}
+
+/* ── secciones: menú lateral. Se recuerda la última para volver a ella tras guardar ── */
+const SECS = Array.from(document.querySelectorAll('.st-sec')).map(s => s.dataset.sec);
+function showSection(sec){
+  if (!SECS.includes(sec)) sec = SECS[0];
+  document.querySelectorAll('.st-sec').forEach(s => s.classList.toggle('is-active', s.dataset.sec === sec));
+  document.querySelectorAll('.st-nav__item').forEach(b => {
+    const on = b.dataset.sec === sec;
+    b.classList.toggle('is-active', on);
+    if (on) b.setAttribute('aria-current', 'true'); else b.removeAttribute('aria-current');
+  });
+  try { sessionStorage.setItem('pw.settings.sec', sec); } catch {}
+}
+document.querySelectorAll('.st-nav__item').forEach(b => b.addEventListener('click', () => {
+  showSection(b.dataset.sec);
+  history.replaceState(null, '', '#' + b.dataset.sec);
+  if (window.matchMedia('(max-width: 900px)').matches) window.scrollTo({ top: 0 });
+}));
+(function initSection(){
+  let saved = null;
+  try { saved = sessionStorage.getItem('pw.settings.sec'); } catch {}
+  showSection(location.hash.slice(1) || saved || SECS[0]);
+})();
+
+/* ── barra de cambios sin guardar ── */
+const settingsForm = document.getElementById('settingsForm');
+/* ── Colores de carril globales: guardado propio (no reinicia la conexión) ── */
+(function () {
+  const grid = document.getElementById('globalLaneColorsGrid');
+  if (!grid) return;
+  const FACTORY = <%- JSON.stringify(defaultLaneColors) %>;
+  const saveBtn = document.getElementById('laneColorsSave');
+  const msg     = document.getElementById('laneColorsMsg');
+  let saved = PWLaneColors.values(grid).join(',');
+  const refresh = () => { saveBtn.disabled = PWLaneColors.values(grid).join(',') === saved; msg.textContent = ''; };
+  PWLaneColors.bind(grid, refresh);
+  document.getElementById('laneColorsDefault').addEventListener('click', () => { PWLaneColors.setAll(grid, FACTORY); refresh(); });
+  saveBtn.addEventListener('click', async () => {
+    saveBtn.disabled = true;
+    try {
+      const r = await fetch('/settings/lane-colors', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded', 'X-Requested-With': 'XMLHttpRequest' },
+        body: new URLSearchParams({ colors: PWLaneColors.values(grid).join(',') }),
+      });
+      if (!r.ok) throw new Error(r.status);
+      saved = PWLaneColors.values(grid).join(',');
+      msg.textContent = I18N.t('client.settings.guardados');
+    } catch {
+      saveBtn.disabled = false;
+      msg.textContent = I18N.t('client.settings.no_se_han_podido_guardar');
+    }
+  });
+})();
+
+/* ── Preferencias de guardado inmediato (no reinician la conexión) ── */
+(function () {
+  const msgEl = document.getElementById('prefsMsg');
+  const msg = { set textContent(v) { msgEl.textContent = v; msgEl.parentElement.hidden = !v; } };
+  document.querySelectorAll('select[data-pref]').forEach(sel => {
+    let saved = sel.value;
+    sel.addEventListener('change', async () => {
+      try {
+        const r = await fetch('/settings/prefs', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/x-www-form-urlencoded', 'X-Requested-With': 'XMLHttpRequest' },
+          body: new URLSearchParams({ key: sel.dataset.pref, value: sel.value }),
+        });
+        if (!r.ok) throw new Error(r.status);
+        saved = sel.value;
+        msg.textContent = I18N.t('client.settings.guardado');
+      } catch {
+        sel.value = saved;
+        msg.textContent = I18N.t('client.settings.no_se_ha_podido_guardar');
+      }
+    });
+  });
+  document.querySelectorAll('input[data-pref-ms]').forEach(inp => {
+    let saved = inp.value;
+    inp.addEventListener('change', async () => {
+      try {
+        const r = await fetch('/settings/prefs', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/x-www-form-urlencoded', 'X-Requested-With': 'XMLHttpRequest' },
+          body: new URLSearchParams({ key: inp.dataset.prefMs, value: String(Math.round(parseFloat(inp.value.replace(',', '.')) * 1000)) }),
+        });
+        if (!r.ok) throw new Error(r.status);
+        saved = inp.value;
+        msg.textContent = I18N.t('client.settings.guardado');
+      } catch {
+        inp.value = saved;
+        msg.textContent = I18N.t('client.settings.no_se_ha_podido_guardar_0_a_10_s');
+      }
+    });
+  });
+})();
+
+/* ── Nombre y logo del club ── */
+(function () {
+  const sw = document.getElementById('clubSwitch');
+  if (!sw) return;
+  const nameEl = document.getElementById('clubName');
+  const img = document.getElementById('clubLogoImg');
+  const empty = document.getElementById('clubLogoEmpty');
+  const file = document.getElementById('clubLogoFile');
+  const removeBtn = document.getElementById('clubLogoRemove');
+  const saveBtn = document.getElementById('clubSave');
+  const msg = document.getElementById('clubMsg');
+  const MAX_SIDE = 512;
+  let logo; // undefined = sin cambios, '' = quitar, data URI = nuevo
+  const dirty = () => { saveBtn.disabled = false; msg.textContent = ''; };
+  const showLogo = (src) => {
+    img.hidden = !src; empty.hidden = !!src; removeBtn.hidden = !src;
+    if (src) img.src = src; else img.removeAttribute('src');
+  };
+
+  sw.addEventListener('click', () => {
+    const on = sw.classList.toggle('is-on');
+    sw.setAttribute('aria-checked', on ? 'true' : 'false');
+    dirty();
+  });
+  nameEl.addEventListener('input', dirty);
+  document.getElementById('clubLogoPick').addEventListener('click', () => file.click());
+  removeBtn.addEventListener('click', () => { logo = ''; showLogo(null); dirty(); });
+
+  // Se reduce y se pasa a PNG aquí: cualquier formato que pinte el navegador
+  // (también SVG/WebP) acaba en algo que el Excel puede incrustar.
+  file.addEventListener('change', () => {
+    const f = file.files && file.files[0];
+    file.value = '';
+    if (!f) return;
+    const url = URL.createObjectURL(f);
+    const im = new Image();
+    im.onload = () => {
+      const w0 = im.naturalWidth || MAX_SIDE, h0 = im.naturalHeight || MAX_SIDE;
+      const k = Math.min(1, MAX_SIDE / Math.max(w0, h0));
+      const c = document.createElement('canvas');
+      c.width = Math.max(1, Math.round(w0 * k));
+      c.height = Math.max(1, Math.round(h0 * k));
+      c.getContext('2d').drawImage(im, 0, 0, c.width, c.height);
+      URL.revokeObjectURL(url);
+      let out = c.toDataURL('image/png');
+      if (out.length > 1300000) out = c.toDataURL('image/jpeg', 0.9);
+      logo = out; showLogo(out); dirty();
+    };
+    im.onerror = () => { URL.revokeObjectURL(url); msg.textContent = I18N.t('client.settings.club_logo_no_se_puede_leer'); };
+    im.src = url;
+  });
+
+  saveBtn.addEventListener('click', async () => {
+    saveBtn.disabled = true;
+    const body = { enabled: sw.classList.contains('is-on') ? '1' : '0', name: nameEl.value };
+    if (logo !== undefined) body.logo = logo;
+    try {
+      const r = await fetch('/settings/club', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'X-Requested-With': 'XMLHttpRequest' },
+        body: JSON.stringify(body),
+      });
+      const d = await r.json().catch(() => ({}));
+      if (!r.ok || !d.ok) throw new Error(d.error || I18N.t('client.settings.no_se_ha_podido_guardar'));
+      logo = undefined;
+      nameEl.value = d.name;
+      msg.textContent = I18N.t('client.settings.guardado');
+    } catch (e) {
+      saveBtn.disabled = false;
+      msg.textContent = e.message;
+    }
+  });
+})();
+
+/* ── Ventanas y pantallas: lo guarda la app de escritorio, no el servidor ── */
+(function () {
+  const api = window.pitwallScreens;
+  const rows = document.getElementById('winRows');
+  if (!rows) return;
+  if (!api) { document.getElementById('winNoDesktop').hidden = false; return; }
+  rows.hidden = false;
+  document.getElementById('winIdentifyCard').hidden = false;
+  const msgEl = document.getElementById('winMsg');
+  const msg = (v) => { msgEl.textContent = v; msgEl.parentElement.hidden = !v; };
+  const auto = document.getElementById('winAutostart');
+  let prefs = null;
+
+  function screenLabel(n, s) {
+    if (!s) return I18N.t('client.settings.pantalla_no_conectada', { n });
+    const base = n === 1 ? I18N.t('client.settings.pantalla_principal') : I18N.t('client.settings.pantalla_n', { n });
+    return base + ' — ' + s.width + '×' + s.height + (s.label ? ' · ' + s.label : '');
+  }
+
+  async function paint() {
+    const [screens, p] = await Promise.all([api.list(), api.getPrefs()]);
+    prefs = p;
+    rows.querySelectorAll('[data-wtype]').forEach(row => {
+      const rule = prefs[row.dataset.wtype];
+      const sel = row.querySelector('[data-w="display"]');
+      sel.innerHTML = '';
+      const add = (v, l) => { const o = document.createElement('option'); o.value = String(v); o.textContent = l; sel.appendChild(o); };
+      add(0, I18N.t('client.settings.ventana_sin_asignar'));
+      // Una pantalla guardada que hoy no está se sigue ofreciendo, para no perder el ajuste.
+      for (let n = 1; n <= Math.max(screens.length, rule.display); n++) add(n, screenLabel(n, screens[n - 1]));
+      sel.value = String(rule.display);
+      const mode = row.querySelector('[data-w="mode"]');
+      mode.value = rule.mode;
+      mode.disabled = rule.display === 0;
+    });
+    const on = !!prefs.training.autostart;
+    auto.classList.toggle('is-on', on);
+    auto.setAttribute('aria-checked', String(on));
+  }
+
+  async function save(next) {
+    try {
+      prefs = await api.setPrefs(next);
+      msg(I18N.t('client.settings.guardado'));
+    } catch {
+      msg(I18N.t('client.settings.no_se_ha_podido_guardar'));
+    }
+    paint();
+  }
+
+  rows.querySelectorAll('[data-wtype] select').forEach(sel => sel.addEventListener('change', () => {
+    const row = sel.closest('[data-wtype]');
+    const next = JSON.parse(JSON.stringify(prefs));
+    next[row.dataset.wtype].display = parseInt(row.querySelector('[data-w="display"]').value, 10) || 0;
+    next[row.dataset.wtype].mode = row.querySelector('[data-w="mode"]').value;
+    save(next);
+  }));
+  auto.addEventListener('click', () => {
+    const next = JSON.parse(JSON.stringify(prefs));
+    next.training.autostart = !next.training.autostart;
+    save(next);
+  });
+  document.getElementById('winIdentify').addEventListener('click', () => api.identify());
+  // Al volver a la ventana puede haber un monitor más o uno menos.
+  window.addEventListener('focus', () => { paint().catch(() => {}); });
+  paint().catch(() => {});
+})();
+
+/* ── Seguridad: contraseña de acceso ── */
+(function () {
+  const sw = document.getElementById('pwSwitch');
+  if (!sw) return;
+  const fields = document.getElementById('pwFields');
+  const actions = document.getElementById('pwActions');
+  const pw = document.getElementById('pwNew'), pw2 = document.getElementById('pwConfirm');
+  const msgEl = document.getElementById('pwMsg');
+  const msg = { set textContent(v) { msgEl.textContent = v; msgEl.parentElement.hidden = !v; } };
+  let enabled = sw.classList.contains('is-on');
+  const paint = () => {
+    sw.classList.toggle('is-on', enabled);
+    sw.setAttribute('aria-checked', enabled ? 'true' : 'false');
+    actions.hidden = !enabled;
+    setNavDot('sec', enabled ? 'ok' : '');
+  };
+  async function send(body) {
+    const r = await fetch('/settings/security', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded', 'X-Requested-With': 'XMLHttpRequest' },
+      body: new URLSearchParams(body),
+    });
+    const d = await r.json().catch(() => ({}));
+    if (!r.ok || !d.ok) throw new Error(d.error || (I18N.t('client.settings.no_se_ha_podido_guardar')));
+    return d;
+  }
+  sw.addEventListener('click', async () => {
+    if (enabled) {
+      try {
+        await send({ enabled: '0' });
+        enabled = false; paint();
+        fields.hidden = false;
+        msg.textContent = I18N.t('client.settings.contrasena_desactivada');
+      } catch (e) { msg.textContent = e.message; }
+    } else {
+      fields.hidden = false;
+      pw.focus();
+      msg.textContent = I18N.t('client.settings.escribe_la_contrasena_y_pulsa_activar');
+    }
+  });
+  document.getElementById('pwChange').addEventListener('click', () => { fields.hidden = false; pw.focus(); });
+  document.getElementById('pwSave').addEventListener('click', async () => {
+    try {
+      await send({ enabled: '1', password: pw.value, confirm: pw2.value });
+      const changed = enabled;
+      enabled = true; paint();
+      pw.value = pw2.value = '';
+      fields.hidden = true;
+      msg.textContent = changed ? (I18N.t('client.settings.contrasena_cambiada'))
+                                : (I18N.t('client.settings.contrasena_activada_este_navegador_sigue_dentro'));
+    } catch (e) { msg.textContent = e.message; }
+  });
+})();
+
+const formSnapshot = f => new URLSearchParams(new FormData(f)).toString();
+const restartSnapshot = f => Array.from(f.querySelectorAll('[data-restart]')).map(el => el.value).join('|');
+let initialForm = null, initialRestart = null;
+function updateSaveBar(){
+  const changed = formSnapshot(settingsForm) !== initialForm;
+  const restart = changed && restartSnapshot(settingsForm) !== initialRestart;
+  document.getElementById('stBar').classList.toggle('is-dirty', changed);
+  document.getElementById('stBarDot').className = 'st-dot' + (changed ? ' st-dot--warn' : '');
+  document.getElementById('stBarMsg').textContent = changed
+    ? (I18N.t('client.settings.cambios_sin_guardar'))
+    : (I18N.t('client.settings.sin_cambios'));
+  document.getElementById('stBarRestart').hidden = !restart;
+  document.getElementById('stDiscard').hidden = !changed;
+}
+let saveBarQueued = false;
+function queueSaveBar(){
+  if (saveBarQueued) return;
+  saveBarQueued = true;
+  setTimeout(() => { saveBarQueued = false; updateSaveBar(); }, 0);
+}
+['input', 'change', 'click'].forEach(ev => settingsForm.addEventListener(ev, queueSaveBar));
+
+/* ── lane badge labels ── */
+function updateLaneBadges(){
+  let offset = 1;
+  document.querySelectorAll('.circuit-row').forEach((row, idx) => {
+    const lanes = parseInt(row.querySelector('.circuit-lanes-input')?.value || '8', 10);
+    const badge = row.querySelector('.circuit-row__lanes-badge');
+    const title = row.querySelector('.vt-circuit-row__title');
+    if (title) title.textContent = (I18N.t('client.settings.circuito')) + (idx + 1);
+    if (badge) badge.textContent = (I18N.t('client.settings.carriles')) + offset + '–' + (offset + lanes - 1);
+    offset += lanes;
+  });
+}
+
+/* ── combo desplegable ↔ escritura a mano (puerto y baud) ── */
+function wireCombo(container, selCls, inpCls, toggleCls){
+  const sel = container.querySelector(selCls);
+  const inp = container.querySelector(inpCls);
+  if (!sel || !inp) return;
+  sel.addEventListener('change', () => { if (sel.value) inp.value = sel.value; });
+  inp.addEventListener('input', () => {
+    let opt = Array.from(sel.options).find(o => o.value === inp.value);
+    if (!opt && inp.value) { opt = new Option(inp.value, inp.value); sel.appendChild(opt); }
+    sel.value = inp.value;
+  });
+  const toggle = container.querySelector(toggleCls);
+  toggle?.addEventListener('click', () => {
+    const open = inp.classList.toggle('is-hidden') === false;
+    toggle.classList.toggle('is-open', open);
+    toggle.setAttribute('aria-expanded', open ? 'true' : 'false');
+    if (open) inp.focus();
+  });
+}
+function wirePortFields(container){ wireCombo(container, '.port-select', '.port-manual', '.port-manual-toggle'); }
+function wireBaudFields(container){ wireCombo(container, '.baud-select', '.baud-manual', '.baud-manual-toggle'); }
+document.querySelectorAll('.circuit-row__field--port').forEach(wirePortFields);
+document.querySelectorAll('.js-baud-field').forEach(wireBaudFields);
+
+/* ── escenario (circuito guardado) ↔ filas de DS ───────────────────────────
+   Un escenario puede tener varios circuitos (sub-lazos de 2-8 carriles). Al
+   elegirlo, esta fila pasa a ser el circuito 1 y se crean automáticamente las
+   filas de DS restantes (una por circuito), cada una con SUS carriles. */
+function renumberCircuitRows(){
+  document.querySelectorAll('.circuit-row').forEach((row, i) => {
+    const num = row.querySelector('.cnum'); if (num) num.textContent = i + 1;
+    const title = row.querySelector('.cname'); if (title) title.textContent = (I18N.t('client.settings.circuito')) + (i + 1);
+  });
+}
+
+function wireCircuitRef(row){
+  const sel = row.querySelector('.circuit-ref-select');
+  const inp = row.querySelector('.circuit-lanes-input');
+  const sub = row.querySelector('.circuit-sub-input');
+  if (!sel || !inp) return;
+  sel.addEventListener('change', () => {
+    // Quita las filas auto-creadas por una expansión previa de ESTA fila.
+    if (row.dataset.expandGroup){
+      document.querySelectorAll(`.circuit-row[data-expand-of="${row.dataset.expandGroup}"]`).forEach(r => r.remove());
+      delete row.dataset.expandGroup;
+    }
+    let config = [];
+    try { config = JSON.parse(sel.options[sel.selectedIndex]?.dataset?.config || '[]'); } catch {}
+    if (!sel.value || !config.length){
+      inp.readOnly = false; if (sub) sub.value = '';
+      updateLaneBadges(); renumberCircuitRows(); return;
+    }
+    // Esta fila = circuito 1 del escenario.
+    inp.value = config[0]; inp.readOnly = true; if (sub) sub.value = '0';
+    // Una fila de DS por cada circuito restante (carriles propios, readonly).
+    if (config.length > 1){
+      const gid = 'g' + (window.__cgid = (window.__cgid || 0) + 1);
+      row.dataset.expandGroup = gid;
+      let after = row;
+      for (let i = 1; i < config.length; i++){
+        const nr = makeCircuitRow();
+        nr.dataset.expandOf = gid;
+        const nsel = nr.querySelector('.circuit-ref-select');
+        const ninp = nr.querySelector('.circuit-lanes-input');
+        const nsub = nr.querySelector('.circuit-sub-input');
+        if (nsel) nsel.value = sel.value;
+        if (ninp){ ninp.value = config[i]; ninp.readOnly = true; }
+        if (nsub) nsub.value = String(i);
+        after.after(nr); after = nr;
+      }
+    }
+    updateLaneBadges(); renumberCircuitRows();
+  });
+}
+document.querySelectorAll('.circuit-row').forEach(wireCircuitRef);
+document.getElementById('circuitList').addEventListener('input', e => {
+  if (e.target.classList.contains('circuit-lanes-input')) updateLaneBadges();
+});
+
+/* ── port options template for add-circuit ── */
+const dsModelOptions = <%- JSON.stringify(Object.entries(dsModels).map(([k, m]) => `<option value="${k}" data-baud="${m.baud}">${m.label}</option>`).join('')) %>;
+/* Al cambiar de modelo la velocidad pasa a la suya (el DS-300 va a 56000, el resto a 4800); sigue siendo editable. */
+function wireModelField(row){
+  const ms = row.querySelector('.model-select');
+  if (!ms) return;
+  ms.addEventListener('change', () => {
+    const baud = ms.selectedOptions[0] && ms.selectedOptions[0].dataset.baud;
+    const sel = row.querySelector('.baud-select'), inp = row.querySelector('.baud-manual');
+    if (!sel || !baud) return;
+    if (!Array.from(sel.options).some(o => o.value === baud)) sel.appendChild(new Option(baud, baud));
+    sel.value = baud;
+    if (inp) inp.value = baud;
+  });
+}
+document.querySelectorAll('.circuit-row').forEach(wireModelField);
+const portOptions = Array.from(document.querySelectorAll('select.port-select option'))
+  .filter((o,i,a) => a.findIndex(x => x.value === o.value) === i && o.value)
+  .map(o => `<option value="${o.value}">${o.textContent.trim()}</option>`).join('');
+
+const circuitRefOptions = `<option value="">— ${I18N.t('client.common.manual')} —</option>` +
+  Array.from(document.querySelector('.circuit-ref-select')?.options || [])
+    .filter(o => o.value)
+    .map(o => `<option value="${o.value}" data-lanes="${o.dataset.lanes}" data-config='${o.dataset.config || ''}'>${o.textContent.trim()}</option>`)
+    .join('');
+
+/* ── fábrica de filas de DS ── */
+function circuitRowHTML(){
+  return `
+    <div class="vt-circuit-row__h">
+      <div class="vt-circuit-row__num cnum"></div>
+      <div class="vt-circuit-row__title cname"></div>
+      <span class="vt-circuit-row__lanes-badge circuit-row__lanes-badge">${I18N.t('client.settings.carriles_2')}</span>
+      <button type="button" class="vt-circuit-row__x btn-remove-circuit" title="${I18N.t('client.common.eliminar')}">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M6 6l12 12M18 6L6 18"/></svg>
+      </button>
+    </div>
+    <div class="vt-group-lbl">${I18N.t('client.settings.conexion_serie')}</div>
+    <div class="vt-fields vt-fields--3 circuit-row__body">
+      <div class="vt-field circuit-row__field circuit-row__field--model">
+        <label>${I18N.t('client.settings.modelo')}</label>
+        <div class="vt-selw"><select class="model-select" name="circuit_model">${dsModelOptions}</select></div>
+      </div>
+      <div class="vt-field circuit-row__field circuit-row__field--port">
+        <label>${I18N.t('client.settings.puerto')}</label>
+        <div class="vt-selw"><select class="port-select" name="circuit_port">
+          <option value="">— ${I18N.t('client.settings.seleccionar')} —</option>${portOptions}
+        </select></div>
+        <button type="button" class="port-manual-toggle" aria-expanded="false">
+          <svg class="port-manual-toggle__chev" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 6l6 6-6 6"/></svg>
+          <span>${I18N.t('client.settings.escribir_el_path_a_mano')}</span>
+        </button>
+        <input class="vt-inp is-mono port-manual is-hidden" type="text" style="margin-top:7px;font-size:13px"
+          placeholder="${I18N.t('client.settings.p_ej_dev_ttys003')}">
+      </div>
+      <div class="vt-field circuit-row__field circuit-row__field--baud js-baud-field">
+        <label>Baud rate</label>
+        <div class="vt-selw"><select class="baud-select" name="circuit_baud" required>
+          <option value="4800">4800</option><option value="9600">9600</option><option value="19200">19200</option><option value="38400">38400</option><option value="56000">56000</option><option value="57600" selected>57600</option><option value="115200">115200</option><option value="230400">230400</option><option value="460800">460800</option><option value="921600">921600</option>
+        </select></div>
+        <button type="button" class="port-manual-toggle baud-manual-toggle" aria-expanded="false">
+          <svg class="port-manual-toggle__chev" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 6l6 6-6 6"/></svg>
+          <span>${I18N.t('client.settings.escribir_a_mano')}</span>
+        </button>
+        <input class="vt-inp is-mono baud-manual is-hidden" type="number" min="300" max="921600" step="1"
+          placeholder="${I18N.t('client.settings.p_ej_57600')}" value="57600" style="margin-top:7px;font-size:13px">
+      </div>
+    </div>
+    <details class="vt-adv circuit-row__adv">
+      <summary>
+        <svg class="vt-adv__chev" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 6l6 6-6 6"/></svg>
+        ${I18N.t('client.settings.opciones_avanzadas_del_puerto')}
+      </summary>
+      <div class="vt-adv__body vt-fields vt-fields--3">
+        <div class="vt-field circuit-row__field">
+          <label>Data bits</label>
+          <div class="vt-selw"><select name="circuit_databits"><option value="7">7</option><option value="8" selected>8</option></select></div>
+        </div>
+        <div class="vt-field circuit-row__field">
+          <label>${I18N.t('client.settings.paridad')}</label>
+          <div class="vt-selw"><select name="circuit_parity"><option value="none" selected>none</option><option value="even">even</option><option value="odd">odd</option></select></div>
+        </div>
+        <div class="vt-field circuit-row__field">
+          <label>Stop bits</label>
+          <div class="vt-selw"><select name="circuit_stopbits"><option value="1" selected>1</option><option value="2">2</option></select></div>
+        </div>
+        <div class="vt-field circuit-row__field">
+          <label>${I18N.t('client.settings.control_de_flujo')}</label>
+          <div class="vt-selw"><select name="circuit_flow"><option value="none" selected>none</option><option value="rtscts">rtscts</option><option value="xonxoff">xonxoff</option></select></div>
+        </div>
+      </div>
+    </details>
+    <div class="vt-divider"></div>
+    <div class="vt-group-lbl">${I18N.t('client.common.asignacion_de_carriles')}</div>
+    <div class="vt-fields vt-fields--2">
+      <div class="vt-field circuit-row__field circuit-row__field--circuit">
+        <label>${I18N.t('client.common.circuito')}</label>
+        <div class="vt-selw"><select class="circuit-ref-select" name="circuit_ref">${circuitRefOptions}</select></div>
+      </div>
+      <div class="vt-field circuit-row__field circuit-row__field--lanes">
+        <label>${I18N.t('client.settings.n_de_carriles')}</label>
+        <input class="vt-inp is-mono circuit-lanes-input" type="number" name="circuit_lanes" min="2" max="8" value="8">
+        <input type="hidden" class="circuit-sub-input" name="circuit_sub" value="">
+      </div>
+    </div>`;
+}
+function makeCircuitRow(){
+  const div = document.createElement('div');
+  div.className = 'vt-circuit-row circuit-row';
+  div.innerHTML = circuitRowHTML();
+  wirePortFields(div.querySelector('.circuit-row__field--port'));
+  wireBaudFields(div.querySelector('.js-baud-field'));
+  wireModelField(div);
+  wireCircuitRef(div);
+  return div;
+}
+
+/* ── add circuit ── */
+document.getElementById('addCircuit')?.addEventListener('click', () => {
+  document.getElementById('circuitList').appendChild(makeCircuitRow());
+  renumberCircuitRows();
+  updateLaneBadges();
+});
+
+/* ── remove circuit ── */
+document.getElementById('circuitList').addEventListener('click', e => {
+  const btn = e.target.closest('.btn-remove-circuit');
+  if (!btn) return;
+  const rows = document.querySelectorAll('.circuit-row');
+  if (rows.length > 1) { btn.closest('.circuit-row').remove(); renumberCircuitRows(); updateLaneBadges(); }
+});
+
+/* ── refresh COM ports ── */
+async function refreshPortsHandler(e) {
+  const btn = e.currentTarget;
+  const originalHTML = btn.innerHTML;
+  btn.disabled = true;
+  btn.innerHTML = '<svg viewBox="0 0 24 24"><path d="M21 12a9 9 0 1 1-2.6-6.4"/><path d="M21 3v5h-5"/></svg>' + (I18N.t('client.settings.buscando'));
+  try {
+    const res = await fetch('/api/settings/ports');
+    const { ports } = await res.json();
+    document.querySelectorAll('.port-select').forEach(sel => {
+      const current = sel.value;
+      const opts = '<option value="">— ' + (I18N.t('client.settings.seleccionar')) + ' —</option>' +
+        ports.map(p => `<option value="${p.path}"${p.path === current ? ' selected' : ''}>${p.path}${p.manufacturer ? ' — ' + p.manufacturer : ''}</option>`).join('');
+      let extra = '';
+      if (current && !ports.find(p => p.path === current)) extra = `<option value="${current}" selected>${current}</option>`;
+      sel.innerHTML = opts + extra;
+    });
+    btn.innerHTML = '✓ ' + (I18N.t('client.settings.v_puertos', { v: ports.length }));
+    setTimeout(() => { btn.innerHTML = originalHTML; btn.disabled = false; }, 1500);
+  } catch (err) {
+    btn.innerHTML = '✗ ' + (I18N.t('client.common.error'));
+    setTimeout(() => { btn.innerHTML = originalHTML; btn.disabled = false; }, 2000);
+  }
+}
+document.getElementById('refreshPorts')?.addEventListener('click', refreshPortsHandler);
+document.getElementById('refreshPortsAgg')?.addEventListener('click', refreshPortsHandler);
+document.getElementById('refreshPortsTictac')?.addEventListener('click', e => { refreshTictacStatus(); refreshPortsHandler(e); });
+
+/* ── túnel público (Cloudflare del club) ── */
+function tunnelModeUi() {
+  const mode = document.getElementById('tunnelMode').value;
+  document.getElementById('tunnelTokenFields').style.display = mode === 'token' ? '' : 'none';
+  document.getElementById('tunnelQuickHelp').style.display   = mode === 'quick' ? '' : 'none';
+}
+function tunnelRender(s) {
+  const dot   = document.getElementById('tunnelDot');
+  const state = document.getElementById('tunnelState');
+  const url   = document.getElementById('tunnelUrl');
+  const hint  = document.getElementById('tunnelHint');
+  const inst  = document.getElementById('tunnelInstallBtn');
+  const dotKind = s.running ? 'ok' : (s.lastError ? 'bad' : 'off');
+  dot.className = 'st-dot st-dot--lg st-dot--' + dotKind;
+  setNavDot('web', dotKind);
+  state.textContent = s.installing
+    ? (I18N.t('client.settings.descargando_cloudflared'))
+    : s.running
+      ? (I18N.t('client.settings.tunel_en_marcha'))
+      : (I18N.t('client.settings.tunel_parado'));
+  url.innerHTML = s.publicUrl
+    ? `<a href="${s.publicUrl}" target="_blank" rel="noopener">${s.publicUrl}</a>`
+    : (s.running && s.mode === 'quick' ? (I18N.t('client.settings.esperando_url_tarda_unos_segundos')) : '');
+  inst.style.display = (!s.binaryFound && !s.installing) ? '' : 'none';
+  document.getElementById('tunnelStartBtn').style.display = s.binaryFound ? '' : 'none';
+  let h = '';
+  if (s.installing) h = I18N.t('client.settings.descargando_el_binario_oficial_de_cloudflare_20');
+  else if (s.installError) h = '⚠️ ' + s.installError;
+  else if (!s.binaryFound) h = I18N.t('client.settings.cloudflared_no_esta_instalado_pulsa_instalar');
+  else if (s.lastError) h = '⚠️ ' + s.lastError;
+  hint.textContent = h;
+  document.getElementById('tunnelHintRow').hidden = !h;
+}
+async function tunnelAction(op) {
+  try {
+    const opts = { method: 'POST' };
+    if (op === 'start') {
+      // Arrancar aplica lo que hay EN PANTALLA (no hace falta "Guardar y aplicar").
+      opts.headers = { 'Content-Type': 'application/json' };
+      opts.body = JSON.stringify({
+        tunnel_mode:      document.getElementById('tunnelMode').value,
+        tunnel_token:     document.querySelector('input[name="tunnel_token"]')?.value || '',
+        tunnel_hostname:  document.querySelector('input[name="tunnel_hostname"]')?.value || '',
+        tunnel_autostart: document.querySelector('input[name="tunnel_autostart"]')?.checked ? '1' : '0',
+      });
+    }
+    const r = await fetch('/tunnel/' + op, opts);
+    tunnelRender(await r.json());
+    if (op === 'start') setTimeout(tunnelRefresh, 2500); // la URL quick tarda un par de segundos
+  } catch {}
+}
+async function tunnelInstall() {
+  const btn = document.getElementById('tunnelInstallBtn');
+  btn.disabled = true;
+  document.getElementById('tunnelState').textContent = I18N.t('client.settings.descargando_cloudflared');
+  document.getElementById('tunnelHint').textContent = I18N.t('client.settings.descargando_el_binario_oficial_de_cloudflare_20');
+  try {
+    const r = await fetch('/tunnel/install', { method: 'POST' });
+    tunnelRender(await r.json());
+  } catch {
+    document.getElementById('tunnelHint').textContent = I18N.t('client.settings.error_de_red_durante_la_descarga');
+  }
+  btn.disabled = false;
+}
+async function tunnelRefresh() {
+  try { const r = await fetch('/tunnel/status'); tunnelRender(await r.json()); } catch {}
+}
+tunnelModeUi();
+tunnelRefresh();
+setInterval(tunnelRefresh, 5000);
+
+initialForm = formSnapshot(settingsForm);
+initialRestart = restartSnapshot(settingsForm);
+updateSaveBar();
+</script>
+
+<%- include('../partials/footer') %>

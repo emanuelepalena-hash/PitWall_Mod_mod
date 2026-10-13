@@ -1,0 +1,1841 @@
+<%- include('../partials/header', { pageTitle: (t('common.resultados')) + ' — ' + race.name }) %>
+<style>
+/* ── Menú «Exportar» ── */
+.vt-page details.exp-menu { position: relative; margin: 0; padding: 0; border: 0; }
+.vt-page .exp-menu > summary { list-style: none; cursor: pointer; color: var(--vt-text); font-size: 13px; font-weight: 600; }
+.exp-menu > summary::-webkit-details-marker { display: none; }
+.exp-menu__list {
+  position: absolute; right: 0; top: calc(100% + 6px); z-index: 50; width: 340px;
+  background: var(--vt-panel, #0d1117); border: 1px solid var(--vt-border-2); border-radius: 10px;
+  box-shadow: 0 12px 32px rgba(0,0,0,.5); padding: 6px;
+}
+.exp-menu__item { display: flex; gap: 10px; align-items: flex-start; padding: 8px 10px; border-radius: 7px; color: var(--vt-text); text-decoration: none; }
+.exp-menu__item:hover { background: var(--vt-surface-2); text-decoration: none; }
+.exp-menu__item svg { flex: 0 0 18px; width: 18px; height: 18px; margin-top: 2px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+.exp-menu__item b { display: block; font-weight: 600; font-size: .88rem; }
+.exp-menu__item small { display: block; color: var(--vt-mute); font-size: .76rem; line-height: 1.3; margin-top: 2px; }
+
+/* ── Race fastest lap banner ── */
+.race-best-banner {
+  display: flex; align-items: center; gap: 1rem;
+  background: linear-gradient(135deg, #fbbf24 0%, #f59e0b 100%);
+  color: #1a1a1a; padding: 1rem 1.25rem; border-radius: 12px;
+  margin-bottom: 1.25rem; box-shadow: 0 4px 16px rgba(245,158,11,0.25);
+}
+.race-best-banner__icon { font-size: 2rem; line-height: 1; }
+.race-best-banner__label { font-size: .75rem; text-transform: uppercase; letter-spacing: .08em; opacity: .8; }
+.race-best-banner__value strong { font-size: 1.5rem; font-weight: 800; font-variant-numeric: tabular-nums; }
+.race-best-banner__meta { margin-left: .75rem; font-size: .9rem; opacity: .85; }
+
+/* ── Barra de scroll horizontal espejo, sobre la cabecera de la parrilla ── */
+.grid-topscroll {
+  overflow-x: auto; overflow-y: hidden;
+  border: 1px solid #21262d; border-bottom: none;
+  border-radius: 12px 12px 0 0; background: #0d1117;
+}
+.grid-topscroll__inner { height: 1px; }
+/* Barra fina y visible sobre el tema oscuro (WebKit + Firefox). */
+.grid-topscroll { scrollbar-width: thin; scrollbar-color: #30363d #0d1117; }
+.grid-topscroll::-webkit-scrollbar { height: 12px; }
+.grid-topscroll::-webkit-scrollbar-track { background: #0d1117; border-radius: 0 0 0 0; }
+.grid-topscroll::-webkit-scrollbar-thumb { background: #30363d; border-radius: 6px; border: 2px solid #0d1117; }
+.grid-topscroll::-webkit-scrollbar-thumb:hover { background: #484f58; }
+/* Si no hay desbordamiento, se colapsa (JS lo oculta). */
+.grid-topscroll.is-hidden { display: none; }
+
+/* ── Comparison matrix table ── */
+.matrix-wrapper { overflow-x: auto; border-radius: 12px; border: 1px solid #21262d; background:#000000; }
+.grid-topscroll + .matrix-wrapper { border-radius: 0 0 12px 12px; }
+.matrix-table { width: 100%; border-collapse: collapse; font-variant-numeric: tabular-nums; font-size: .85rem; }
+.matrix-table th, .matrix-table td { padding: .55rem .7rem; text-align: center; }
+.matrix-table thead th {
+  background: #161b22; color: #c9d1d9; font-weight: 600; font-size: .75rem;
+  text-transform: uppercase; letter-spacing: .05em; border-bottom: 2px solid #30363d;
+  position: sticky; top: 0; z-index: 1;
+}
+.matrix-table .matrix-name { text-align: left; min-width: 180px; }
+.matrix-table .matrix-pos { width: 3rem; }
+.matrix-lane__label { font-size: .65rem; color: #8b949e; margin-top: 4px; font-weight: 500; }
+
+/* ── Columnas por ocurrencia (carreras de pasadas / repetir-carril) ── */
+/* Marcador de ocurrencia bajo el badge de pista (· 1ª, · 2ª…). */
+.matrix-occ__label { font-size: .62rem; color: #8b949e; margin-top: 4px; font-weight: 600; letter-spacing: .02em; }
+.matrix-occ__ord { color: #c9d1d9; font-weight: 700; }
+/* Separador sutil al inicio de cada nuevo grupo de carril, para que las
+   ocurrencias del mismo carril se lean como un bloque. Se aplica a la cabecera
+   y a todas las celdas de la primera ocurrencia de cada carril. */
+.matrix-occ--group-start { box-shadow: inset 2px 0 0 #30363d; }
+thead .matrix-occ--group-start { box-shadow: inset 2px 0 0 #484f58; }
+.lane-pill {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 1.8rem; height: 1.8rem; border-radius: 6px; color: #fff;
+  font-weight: 700; font-size: .8rem;
+}
+.matrix-entity { border-top: 2px solid #30363d; background: #161b22; }
+.matrix-entity .matrix-name { padding-top: .7rem; padding-bottom: .25rem; }
+.matrix-entity .matrix-total { font-size: 1.15rem; font-weight: 800; color: #58a6ff; }
+.matrix-entity .matrix-lane-laps { font-size: 1rem; font-weight: 700; color: #c9d1d9; }
+/* Piloto(s) que rodaron ese carril en esa manga, bajo el nº de vueltas. Nombre
+   completo: parte en varias líneas si la columna es estrecha. */
+.matrix-driver {
+  display: block; margin-top: 2px; font-size: .6rem; line-height: 1.15;
+  font-weight: 500; color: #8b949e; text-transform: none; letter-spacing: 0;
+}
+/* Posición por vueltas dentro del carril, entre paréntesis junto al nº de vueltas */
+.lane-rank { font-size: .62em; font-weight: 600; color: #8b949e; margin-left: 3px; font-variant-numeric: tabular-nums; }
+.lane-rank--top { color: #fbbf24; }
+/* Mejor media de carril junto a la media general (columna de totales) */
+.stat-best-lane { color: #7d8590; font-variant-numeric: tabular-nums; }
+.matrix-entity.top-1 .matrix-total { color: #fbbf24; }
+.matrix-entity.top-2 .matrix-total { color: #d1d5db; }
+.matrix-entity.top-3 .matrix-total { color: #d97706; }
+.matrix-stat { background:#000000; }
+.matrix-stat td { padding: .35rem .7rem; color: #c9d1d9; }
+/* Alterna el fondo de las sub-filas para separarlas visualmente de un vistazo. */
+.matrix-stat:nth-of-type(even of .matrix-stat) td { background: rgba(255,255,255,.018); }
+.matrix-stat__label {
+  text-align: left !important; color: #c9d1d9 !important;
+  font-size: .72rem; font-weight: 600; padding-left: 1rem !important;
+  text-transform: uppercase; letter-spacing: .04em;
+}
+.matrix-stat__total { color: #8b949e !important; font-size: .8rem; }
+.matrix-stat--best td { color: #7ee787; font-weight: 600; }
+.matrix-stat--avg td { color: #c9d1d9; }
+.matrix-stat--worst td { color: #8b949e; font-size: .78rem; }
+.matrix-stat--worst .exit-count { color: #f85149; font-weight: 600; margin-right: 3px; }
+.matrix-stat--worst .exit-count:not(.has-exits) { color: #484f58; }
+.matrix-stat--pit td { color: #c9d1d9; font-size: .78rem; }
+.matrix-stat--pit .exit-count { color: #ff9800; font-weight: 600; margin-right: 3px; }
+.matrix-stat--pit .pit-laps { color: #8b949e; font-family: 'Share Tech Mono', monospace; }
+.exit-total { color: #f85149; font-weight: 600; margin-left: 4px; }
+.matrix-stat--pit .exit-total { color: #ff9800; }
+
+/* Starting lane highlight: subtle left border + tinted background, applied to
+   the entity header cell and the 4 stat cells of that lane so the column
+   reads as a single visual block. */
+.matrix-lane-cell--start {
+  background: rgba(88, 166, 255, 0.10) !important;
+  box-shadow: inset 3px 0 0 #58a6ff;
+}
+.start-lane-tag {
+  display: inline-block; margin-left: 8px;
+  padding: 2px 7px; border-radius: 10px;
+  background: rgba(88,166,255,.16); color: #58a6ff;
+  font-size: .7rem; font-weight: 700; letter-spacing: .03em;
+  vertical-align: middle;
+}
+
+.race-best {
+  background: linear-gradient(135deg, rgba(251,191,36,0.2), rgba(245,158,11,0.15)) !important;
+  color: #fbbf24 !important; font-weight: 800 !important;
+  position: relative;
+  border-radius: 4px;
+}
+/* "Mejor de la carrera": etiqueta corta en vez de estrella. */
+.race-best-tag {
+  display: inline-block; margin-left: 5px; padding: 1px 5px;
+  border-radius: 4px; background: rgba(251,191,36,.22);
+  color: #fbbf24; font-size: .6rem; font-weight: 800;
+  letter-spacing: .04em; text-transform: uppercase; vertical-align: middle;
+}
+
+/* ── Consistencia (reutiliza el sistema de niveles de live-stats) ── */
+/* Sub-fila por carril */
+.matrix-stat--cons td { color: #c9d1d9; font-size: .8rem; font-variant-numeric: tabular-nums; }
+.res-cons { font-weight: 700; }
+.res-cons--exc  { color: var(--vt-green, #3fb950); }
+.res-cons--good { color: #56d364; }
+.res-cons--warn { color: var(--vt-amber, #e6a817); }
+.res-cons--bad  { color: var(--vt-red, #f85149); }
+.res-cons--null { color: var(--vt-mute, #6e7681); font-weight: 500; }
+/* Chips de consistencia general en la cabecera de fila */
+.res-cons-head { display: inline-flex; align-items: center; gap: 6px; margin-left: 10px; vertical-align: middle; }
+.res-cons-head__lbl { color: #8b949e; font-size: .62rem; text-transform: uppercase; letter-spacing: .05em; font-weight: 600; }
+.res-cons-chip {
+  display: inline-flex; align-items: baseline; gap: 3px;
+  padding: 1px 7px; border-radius: 10px; font-size: .74rem; font-weight: 700;
+  font-variant-numeric: tabular-nums; background: rgba(255,255,255,.05);
+}
+.res-cons-chip__scope { font-size: .6rem; font-weight: 600; color: #8b949e; letter-spacing: .02em; }
+.res-cons-chip__de { font-size: .62rem; font-weight: 600; color: #6e7681; }
+.res-cons-chip--sec { opacity: .85; }
+.res-cons-chip.res-cons--exc  { color: var(--vt-green, #3fb950); }
+.res-cons-chip.res-cons--good { color: #56d364; }
+.res-cons-chip.res-cons--warn { color: var(--vt-amber, #e6a817); }
+.res-cons-chip.res-cons--bad  { color: var(--vt-red, #f85149); }
+.res-cons-chip.res-cons--null { color: var(--vt-mute, #6e7681); }
+/* Redondel azul = vuelta rápida general del carril (mejor entre todos en esa pista) */
+.lane-fastest-dot {
+  display: inline-block; width: .62em; height: .62em; border-radius: 50%;
+  background: #2f81f7; margin-right: .35em; vertical-align: middle;
+}
+
+@media print {
+  @page { size: A3 portrait; margin: 10mm; }
+  .print-hide { display: none !important; }
+
+  /* El layout de pantalla fija body a 100vh con overflow hidden: en papel
+     eso recorta todo lo que no cabe en la primera página. */
+  html, body { height: auto !important; overflow: visible !important; }
+  .main-content { overflow: visible !important; height: auto !important; padding: 0 !important; }
+  .vt-page { padding: 0 !important; min-height: 0 !important; }
+  .vt-wrap { max-width: none !important; margin: 0 !important; padding: 0 !important; }
+
+  .navbar, .footer, .vt-head__actions, .results-tabs, .vt-back-link, .grid-topscroll { display: none !important; }
+  /* Las gráficas (canvas sobre fondo negro) no son imprimibles: siempre se
+     imprime la comparativa, esté o no activa esa pestaña. */
+  .results-panel { display: none !important; }
+  #tab-matrix { display: block !important; }
+
+  html, body, .vt-page, .vt-wrap, .main-content { background: #fff !important; color: #000 !important; }
+  .vt-page h1 { color: #000 !important; }
+  .vt-page h1::before { content: "<%= race.name %> — "; font-size: 1rem; color: #555; display: block; font-weight: 400; }
+  .vt-lead, .vt-lead strong { color: #555 !important; }
+
+  /* Banner de vuelta rápida: blanco con borde, texto negro */
+  .race-best-banner {
+    background: #fff !important; color: #000 !important;
+    border: 2px solid #b45309; box-shadow: none; border-radius: 8px;
+  }
+  .race-best-banner__label, .race-best-banner__meta { color: #555 !important; opacity: 1; }
+
+  /* Matriz comparativa en claro */
+  .matrix-wrapper { overflow: visible; border: none; background: #fff !important; border-radius: 0; }
+  .matrix-table { font-size: .72rem; }
+  .matrix-table th, .matrix-table td { border: 1px solid #ccc; padding: .3rem .45rem; color: #000 !important; }
+  .matrix-table thead th {
+    background: #f0f0f0 !important; color: #000 !important;
+    border-bottom: 2px solid #999; position: static;
+  }
+  .matrix-lane__label { color: #555; }
+  .matrix-occ__label { color: #555; }
+  .matrix-driver { color: #333 !important; }
+  .matrix-occ__ord { color: #000 !important; }
+  .matrix-occ--group-start, thead .matrix-occ--group-start {
+    box-shadow: none; border-left: 2px solid #999 !important;
+  }
+  .matrix-entity { background: #f6f6f6 !important; border-top: 2px solid #999; }
+  .matrix-entity td { font-weight: 700; }
+  .matrix-entity .matrix-total, .matrix-entity .matrix-lane-laps { color: #000 !important; }
+  .lane-rank { color: #666 !important; }
+  .lane-rank--top { color: #b45309 !important; }
+  .matrix-entity.top-1 .matrix-total { color: #b45309 !important; }
+  .matrix-stat { background: #fff !important; }
+  .matrix-stat td { color: #000 !important; }
+  .matrix-stat__label { color: #555 !important; padding-left: .5rem !important; }
+  .matrix-stat__total { color: #555 !important; }
+  .matrix-stat--best td { color: #166534 !important; }
+  .matrix-stat--worst td, .matrix-stat--pit td { color: #444 !important; font-size: .68rem; }
+  .matrix-stat--worst .exit-count.has-exits, .matrix-stat--pit .exit-count.has-exits,
+  .exit-total { color: #b91c1c !important; }
+  .matrix-stat--worst .exit-count:not(.has-exits) { color: #aaa !important; }
+  .pit-laps { color: #555 !important; }
+
+  /* Elementos con color de fondo: forzar que se impriman */
+  .lane-pill, .pos-badge, .lane-dot, .lane-fastest-dot {
+    -webkit-print-color-adjust: exact; print-color-adjust: exact;
+  }
+  .pos-badge { border: 1px solid #999; color: #000 !important; background: none !important; }
+  .race-best {
+    background: none !important; color: #000 !important;
+    outline: 2px solid #b45309; outline-offset: -2px;
+  }
+  .race-best-tag { background: none !important; color: #b45309 !important; border: 1px solid #b45309; }
+  /* Consistencia en papel: mismo texto, colores oscuros legibles. */
+  .matrix-stat--cons td { color: #000 !important; }
+  .res-cons--exc, .res-cons--good, .res-cons-chip.res-cons--exc, .res-cons-chip.res-cons--good { color: #166534 !important; }
+  .res-cons--warn, .res-cons-chip.res-cons--warn { color: #b45309 !important; }
+  .res-cons--bad, .res-cons-chip.res-cons--bad { color: #b91c1c !important; }
+  .res-cons--null, .res-cons-chip.res-cons--null { color: #888 !important; }
+  .res-cons-chip { background: none !important; border: 1px solid #ccc; }
+  .res-cons-head__lbl { color: #555 !important; }
+  .matrix-lane-cell--start {
+    background: #e8f0fe !important; box-shadow: none;
+    border-left: 3px solid #1a56db !important;
+    -webkit-print-color-adjust: exact; print-color-adjust: exact;
+  }
+  .start-lane-tag { background: none !important; color: #1a56db !important; border: 1px solid #1a56db; }
+
+  /* Evitar cortar las filas de un participante entre páginas */
+  .matrix-table tr { break-inside: avoid; page-break-inside: avoid; }
+}
+</style>
+<div class="vt-page vt-page--results">
+  <div class="vt-wrap">
+
+    <% var _publicView = (typeof publicView !== 'undefined' && publicView); %>
+    <a href="<%= _publicView ? '/results' : '/races/' + race.id %>" class="vt-back-link">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M19 12H5M12 19l-7-7 7-7"/></svg>
+      <%= _publicView ? (t('common.volver_a_resultados')) : (t('common.volver_a_la_carrera')) %>
+    </a>
+
+  <%- include('../partials/club-brand') %>
+
+  <!-- Header -->
+  <div class="vt-head" style="align-items:flex-start">
+    <div class="vt-head__title" style="flex-direction:column;align-items:flex-start;gap:6px">
+      <h1><%= t('common.resultados') %></h1>
+      <p class="vt-lead" style="margin-top:0">
+        <strong style="color:var(--vt-text);font-weight:600"><%= race.name %></strong>
+        · <%= t('races.type.' + race.type) %>
+        · <%= t('races.format.' + race.format) %>
+      </p>
+    </div>
+    <div class="vt-head__actions">
+      <span class="vt-badge is-info"><span class="vt-badge__d"></span><%= tandas.length %> <%= t(tandas.length === 1 ? 'results.tanda' : 'results.tandas') %></span>
+      <% if (!_publicView) { %>
+      <details class="exp-menu">
+        <summary class="vt-btn vt-btn--ghost vt-btn--sm">
+          <svg viewBox="0 0 24 24"><path d="M12 3v12M7 10l5 5 5-5M5 21h14"/></svg>
+          <%= t('results.exportar') %> ▾
+        </summary>
+        <div class="exp-menu__list" role="menu">
+          <a href="/races/<%= race.id %>/results/xlsx?lang=<%= lang %>" class="exp-menu__item" role="menuitem">
+            <svg viewBox="0 0 24 24"><path d="M14 3H5a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2V8z"/><path d="M14 3v5h5M9 13l3 3 3-3M12 16V9"/></svg>
+            <span><b>Excel</b><small><%= t('results.exportar_a_excel') %></small></span>
+          </a>
+          <a href="/races/<%= race.id %>/results/points.xlsx?lang=<%= lang %>" class="exp-menu__item" role="menuitem">
+            <svg viewBox="0 0 24 24"><path d="M8 21h8M12 17v4M7 4h10v6a5 5 0 0 1-10 0z"/><path d="M7 5H4.5A1.5 1.5 0 0 0 3 6.5 3.5 3.5 0 0 0 6.5 10M17 5h2.5A1.5 1.5 0 0 1 21 6.5 3.5 3.5 0 0 1 17.5 10"/></svg>
+            <span><b><%= t('results.puntos_xlsx') %></b><small><%= t('results.exportar_puntos_de_clasificacion_excel') %></small></span>
+          </a>
+          <a href="/races/<%= race.id %>/results/points.csv?lang=<%= lang %>" class="exp-menu__item" role="menuitem">
+            <svg viewBox="0 0 24 24"><path d="M14 3H5a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2V8z"/><path d="M14 3v5h5"/></svg>
+            <span><b><%= t('results.puntos_csv') %></b><small><%= t('results.exportar_puntos_csv') %></small></span>
+          </a>
+          <a href="/races/<%= race.id %>/results/control.csv" class="exp-menu__item" role="menuitem">
+            <svg viewBox="0 0 24 24"><path d="M14 3H5a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2V8z"/><path d="M14 3v5h5M8 13h8M8 17h5"/></svg>
+            <span><b>Control</b><small><%= t('results.exportar_para_pitwall_control_csv_tictacslot') %></small></span>
+          </a>
+          <a href="/races/<%= race.id %>/results/areacorse.csv" class="exp-menu__item" role="menuitem">
+            <svg viewBox="0 0 24 24"><path d="M14 3H5a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2V8z"/><path d="M14 3v5h5M8 13h8M8 17h5"/></svg>
+            <span><b>area-corse</b><small><%= t('results.exportar_para_area_corse_it_csv_de_resultados') %></small></span>
+          </a>
+          <a href="/races/<%= race.id %>/results/export.html" class="exp-menu__item" role="menuitem">
+            <svg viewBox="0 0 24 24"><path d="M9 19c-5 1.5-5-2.5-7-3m14 6v-3.87a3.37 3.37 0 0 0-.94-2.61c3.14-.35 6.44-1.54 6.44-7A5.44 5.44 0 0 0 20 4.77 5.07 5.07 0 0 0 19.91 1S18.73.65 16 2.48a13.38 13.38 0 0 0-7 0C6.27.65 5.09 1 5.09 1A5.07 5.07 0 0 0 5 4.77a5.44 5.44 0 0 0-1.5 3.78c0 5.42 3.3 6.61 6.44 7A3.37 3.37 0 0 0 9 18.13V22"/></svg>
+            <span><b><%= t('results.exportar_para_github') %></b><small><%= t('results.descarga_un_index_html_autocontenido_para') %></small></span>
+          </a>
+        </div>
+      </details>
+      <% } %>
+      <button type="button" class="vt-btn vt-btn--ghost vt-btn--sm" onclick="window.print()" title="<%= t('results.guardar_como_pdf') %>">
+        <svg viewBox="0 0 24 24"><path d="M6 9V4h12v5M6 18H4a1 1 0 0 1-1-1v-5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2v5a1 1 0 0 1-1 1h-2M6 14h12v7H6z"/></svg>
+        PDF
+      </button>
+    </div>
+  </div>
+
+  <% if (results.length === 0) { %>
+    <% if (typeof pole !== 'undefined' && pole) { %>
+      <%- include('_pole-panel', { pole, lang }) %>
+      <div class="vt-empty" style="margin-top:20px">
+        <p style="color:var(--vt-mute);margin:0">
+          <%= t('results.completa_al_menos_una_manga_para_ver_el_resto') %>
+        </p>
+      </div>
+    <% } else { %>
+      <div class="vt-empty" style="margin-top:32px">
+        <div class="vt-empty__t"><%= t('results.sin_datos_todavia') %></div>
+        <p style="color:var(--vt-mute);margin:6px 0 0">
+          <%= t('results.completa_al_menos_una_manga_para_ver_resultados') %>
+        </p>
+      </div>
+    <% } %>
+  <% } else { %>
+
+    <%
+      function fmtMs(ms) {
+        if (ms == null) return '—';
+        const totalSec   = Math.floor(ms / 1000);
+        const hundredths = Math.floor((ms % 1000) / 10);
+        const secs = totalSec % 60;
+        const mins = Math.floor(totalSec / 60);
+        return (mins > 0 ? mins + ':' : '') + String(secs).padStart(mins > 0 ? 2 : 1, '0') + '.' + String(hundredths).padStart(2, '0');
+      }
+    %>
+
+    <!-- Tab nav -->
+    <div class="results-tabs">
+      <button class="results-tab active" data-tab="matrix">
+        <%= t('results.comparativa') %>
+      </button>
+      <button class="results-tab" data-tab="progression">
+        <%= t('results.progresion') %>
+      </button>
+      <button class="results-tab" data-tab="positions">
+        <%= t('results.posiciones') %>
+      </button>
+      <button class="results-tab" data-tab="gap">
+        <%= t('results.gap_al_lider') %>
+      </button>
+      <button class="results-tab" data-tab="gapgrid">
+        <%= t('results.gap_rejilla') %>
+      </button>
+      <button class="results-tab" data-tab="advanced">
+        <%= t('results.estadisticas_avanzadas') %>
+      </button>
+      <% if (typeof driverStats !== 'undefined' && driverStats) { %>
+      <button class="results-tab" data-tab="drivers"><%= t('results.pilotos') %></button>
+      <% } %>
+      <% if (typeof pole !== 'undefined' && pole) { %>
+      <button class="results-tab" data-tab="pole">Pole</button>
+      <% } %>
+    </div>
+
+    <% if (typeof driverStats !== 'undefined' && driverStats) { %>
+    <div class="results-panel" id="tab-drivers">
+      <%- include('_drivers-panel', { driverStats }) %>
+    </div>
+    <% } %>
+
+    <% if (typeof pole !== 'undefined' && pole) { %>
+    <div class="results-panel" id="tab-pole">
+      <%- include('_pole-panel', { pole, lang }) %>
+    </div>
+    <% } %>
+
+    <!-- ── Comparison matrix (PDF-style, modern) ── -->
+    <div class="results-panel active" id="tab-matrix">
+      <%
+        const orderedLanes = (laneSequence || []).filter(l => l > 0);
+        // Desempate a igual vueltas (utils/tieBreak): misma manga final → quien cruzó antes;
+        // si no, la coma de la ÚLTIMA manga (quién iba más adelantado al final). Después el
+        // tiempo total y la mejor vuelta. DEBE coincidir con Lap.aggregateByRace / la proyección del motor.
+        const byTotalM = [...results].sort((a,b) => b.total_laps - a.total_laps
+          || compareLastManga(a, b)
+          || (a.total_time_ms||Infinity) - (b.total_time_ms||Infinity)
+          || (a.best_lap_ms||Infinity) - (b.best_lap_ms||Infinity));
+
+        // VR general de cada carril = mejor `best_ms` de ese carril entre todos
+        // los participantes. Se marca con un redondel azul en la fila "Rápida".
+        const laneFastest = {};
+        byTotalM.forEach(r => (r.perLane || []).forEach(pl => {
+          if (pl.best_ms != null && (laneFastest[pl.lane] == null || pl.best_ms < laneFastest[pl.lane])) {
+            laneFastest[pl.lane] = pl.best_ms;
+          }
+        }));
+
+        // ── Modo OCURRENCIA (pasadas / repetir-carril) ──
+        // Si el backend marca perOccurrence, las columnas son occColumns (una por
+        // (carril, ocurrencia)) en vez de los carriles. VR por columna = mejor
+        // best_ms de esa columna entre todos los participantes (redondel azul).
+        const perOcc = (typeof perOccurrence !== 'undefined' && perOccurrence && Array.isArray(occColumns));
+        const occFastest = {};
+        if (perOcc) {
+          byTotalM.forEach(r => occColumns.forEach(col => {
+            const c = (r.occByKey || {})[col.key];
+            if (c && c.best_ms != null && (occFastest[col.key] == null || c.best_ms < occFastest[col.key])) {
+              occFastest[col.key] = c.best_ms;
+            }
+          }));
+        }
+
+        // ── Ranking por VUELTAS dentro de cada carril (columna) ──
+        // En cada pista, el que MÁS vueltas hizo es (1). A igualdad de vueltas se
+        // desempata por la MEDIA del carril (menor media = mejor posición). Solo
+        // comparten posición si empatan en vueltas Y media (prácticamente nunca).
+        // Se pinta entre paréntesis junto al nº de vueltas de cada piloto.
+        const keyOf = r => `${r.entity_type}_${r.entity_id}`;
+        function rankByLaps(entries) {
+          const m = {};
+          // "o mejor que e": más vueltas, o mismas vueltas con mejor (menor) media.
+          const better = (o, e) => o.laps > e.laps
+            || (o.laps === e.laps && o.avg != null && (e.avg == null || o.avg < e.avg));
+          entries.forEach(e => { m[e.key] = 1 + entries.filter(o => better(o, e)).length; });
+          return m;
+        }
+        const laneLapRank = {};
+        orderedLanes.forEach(lane => {
+          const entries = byTotalM
+            .map(r => { const pl = (r.perLane || []).find(p => p.lane === lane);
+                        return pl && pl.laps != null ? { key: keyOf(r), laps: pl.laps, avg: pl.avg_ms } : null; })
+            .filter(Boolean);
+          laneLapRank[lane] = rankByLaps(entries);
+        });
+        const occLapRank = {};
+        if (perOcc) {
+          occColumns.forEach(col => {
+            const entries = byTotalM
+              .map(r => { const c = (r.occByKey || {})[col.key];
+                          return c && c.laps != null ? { key: keyOf(r), laps: c.laps, avg: c.avg_ms } : null; })
+              .filter(Boolean);
+            occLapRank[col.key] = rankByLaps(entries);
+          });
+        }
+
+        function fmtSec(ms) {
+          if (ms == null) return '—';
+          return (ms / 1000).toFixed(3).replace('.', ',');
+        }
+
+        // Consistencia: nivel → clase de color y etiqueta (mismo sistema que live-stats).
+        function consClass(level) {
+          switch (level) {
+            case 'excelente': return 'res-cons--exc';
+            case 'buena':     return 'res-cons--good';
+            case 'irregular': return 'res-cons--warn';
+            case 'erratica':  return 'res-cons--bad';
+            default:          return 'res-cons--null';
+          }
+        }
+        function consLabel(level) {
+          switch (level) {
+            case 'excelente': return t('client.common.excelente');
+            case 'buena':     return t('client.common.buena');
+            case 'irregular': return t('client.common.irregular');
+            case 'erratica':  return t('client.common.erratica');
+            default:          return '—';
+          }
+        }
+        // % con 1 decimal y coma decimal; null → '—'.
+        function fmtPct(p) {
+          if (p == null) return '—';
+          return Number(p).toFixed(1).replace('.', ',') + '%';
+        }
+        // ±DE en segundos (2 decimales), o cadena vacía si null.
+        function fmtConsDe(ms) {
+          if (ms == null) return '';
+          return '±' + (ms / 1000).toFixed(2).replace('.', ',') + ' s';
+        }
+      %>
+
+      <% if (raceBestLapMs != null) { %>
+        <div class="race-best-banner">
+          <div>
+            <div class="race-best-banner__label"><%= t('results.vuelta_rapida_de_la_carrera') %></div>
+            <div class="race-best-banner__value">
+              <strong><%= fmtSec(raceBestLapMs) %>s</strong>
+              <span class="race-best-banner__meta"><%= raceBestEntity %> · <%= t('results.pista') %> <%= raceBestLane %></span>
+            </div>
+          </div>
+        </div>
+      <% } %>
+
+      <div class="grid-topscroll" id="matrixTopScroll" aria-hidden="true"><div class="grid-topscroll__inner"></div></div>
+      <div class="matrix-wrapper" id="matrixWrapper">
+        <table class="matrix-table">
+          <thead>
+            <tr>
+              <th class="matrix-pos">#</th>
+              <th class="matrix-name"><%= t('common.equipo_piloto') %></th>
+              <th class="matrix-laps"><%= t('client.common.vueltas') %></th>
+              <% if (perOcc) { %>
+                <% occColumns.forEach(col => {
+                     // Separador de grupo al empezar un carril nuevo (occ === 1).
+                     const groupStart = col.occ === 1;
+                %>
+                  <th class="matrix-lane matrix-occ <%= groupStart ? 'matrix-occ--group-start' : '' %>">
+                    <span class="lane-pill" style="background:<%= LANE_COLORS[col.lane-1] || '#8b949e' %>"><%= col.lane %></span>
+                    <div class="matrix-occ__label">
+                      <% if (col.occCount > 1) { %><span class="matrix-occ__ord"><%= col.occ %>/<%= col.occCount %></span><% } %>
+                    </div>
+                  </th>
+                <% }) %>
+              <% } else { %>
+                <% orderedLanes.forEach(lane => { %>
+                  <th class="matrix-lane">
+                    <span class="lane-pill" style="background:<%= LANE_COLORS[lane-1] || '#8b949e' %>"><%= lane %></span>
+                    <div class="matrix-lane__label"><%= t('results.pista') %> <%= lane %></div>
+                  </th>
+                <% }) %>
+              <% } %>
+            </tr>
+          </thead>
+          <tbody>
+            <% byTotalM.forEach((r, i) => {
+                 const laneMap = new Map((r.perLane||[]).map(pl => [pl.lane, pl]));
+                 const startKey = `${r.entity_type}_${r.entity_id}`;
+                 const startLane = (startLaneByEntity || {})[startKey];
+                 // Carril donde hizo su VR personal (mejor vuelta) y carril de su
+                 // mejor media (menor media por carril). Se muestran en la columna
+                 // de totales, entre paréntesis, junto a la VR y a la media.
+                 const bestLapLane = r.best_lap_ms != null
+                   ? ((r.perLane||[]).find(pl => pl.best_ms === r.best_lap_ms) || {}).lane
+                   : null;
+                 let bestAvgLane = null, bestAvgMs = Infinity;
+                 (r.perLane||[]).forEach(pl => { if (pl.avg_ms != null && pl.avg_ms < bestAvgMs) { bestAvgMs = pl.avg_ms; bestAvgLane = pl.lane; } });
+            %>
+              <!-- Entity header row -->
+              <tr class="matrix-entity <%= i < 3 ? 'top-' + (i+1) : '' %>">
+                <td class="matrix-pos" rowspan="6">
+                  <span class="pos-badge pos-<%= i+1 %>"><%= i+1 %></span>
+                </td>
+                <td class="matrix-name">
+                  <% if (r.color) { %>
+                    <span class="lane-dot" style="background:<%= r.color %>; width:10px; height:10px; display:inline-block; border-radius:3px; margin-right:6px;"></span>
+                  <% } %>
+                  <strong><%= r.entity_name %></strong>
+                  <% if (startLane) { %>
+                    <span class="start-lane-tag" title="<%= t('results.carril_de_inicio') %>"><%= t('results.sale') %> P<%= startLane %></span>
+                  <% } %>
+                </td>
+                <td class="matrix-laps matrix-total">
+                  <%= r.total_laps %><% if (r.last_manga_coma > 0) { %><span style="font-size:.6em; color:<%= r.last_manga_coma_manual ? '#58a6ff' : '#8b949e' %>; margin-left:4px; font-weight:normal;" title="<%= r.last_manga_coma_manual ? t('results.coma_manual_title') : t('results.coma_title') %>">+<%= r.last_manga_coma.toFixed(2).replace('.', ',') %></span><% } %>
+                </td>
+                <% if (perOcc) { %>
+                  <% occColumns.forEach(col => {
+                       const c = (r.occByKey || {})[col.key];
+                       const groupStart = col.occ === 1;
+                  %>
+                    <td class="matrix-lane-cell matrix-lane-laps <%= groupStart ? 'matrix-occ--group-start' : '' %>">
+                      <% const oRank = (c && c.laps != null && occLapRank[col.key]) ? occLapRank[col.key][startKey] : null; %>
+                      <%= c ? c.laps : '—' %><% if (oRank) { %><span class="lane-rank <%= oRank === 1 ? 'lane-rank--top' : '' %>">(<%= oRank %>)</span><% } %>
+                      <% if (c && c.drivers && c.drivers.length) { %>
+                        <span class="matrix-driver" title="<%= (t('results.piloto_del_carril_en_esta_manga')) %>: <%= c.drivers.join(' · ') %>"><%= c.drivers.join(' · ') %></span>
+                      <% } %>
+                    </td>
+                  <% }) %>
+                <% } else { %>
+                  <% orderedLanes.forEach(lane => {
+                       const pl = laneMap.get(lane);
+                       const isStart = lane === startLane;
+                  %>
+                    <td class="matrix-lane-cell matrix-lane-laps <%= isStart ? 'matrix-lane-cell--start' : '' %>">
+                      <% const lRank = (pl && pl.laps != null && laneLapRank[lane]) ? laneLapRank[lane][startKey] : null; %>
+                      <%= pl ? pl.laps : '—' %><% if (lRank) { %><span class="lane-rank <%= lRank === 1 ? 'lane-rank--top' : '' %>">(<%= lRank %>)</span><% } %>
+                      <% if (pl && pl.drivers && pl.drivers.length) { %>
+                        <span class="matrix-driver" title="<%= (t('results.piloto_del_carril')) %>: <%= pl.drivers.join(' · ') %>"><%= pl.drivers.join(' · ') %></span>
+                      <% } %>
+                    </td>
+                  <% }) %>
+                <% } %>
+              </tr>
+
+              <!-- Fastest lap row -->
+              <tr class="matrix-stat matrix-stat--best">
+                <td class="matrix-stat__label"><%= t('client.common.vuelta_rapida') %></td>
+                <td class="matrix-stat__total"><%= fmtSec(r.best_lap_ms) %><% if (bestLapLane) { %><span class="lane-rank lane-rank--top" title="<%= t('results.carril_de_la_vuelta_rapida') %>">(<%= bestLapLane %>)</span><% } %></td>
+                <% if (perOcc) { %>
+                  <% occColumns.forEach(col => {
+                       const c = (r.occByKey || {})[col.key];
+                       const isRaceBest = c && c.best_ms != null && c.best_ms === raceBestLapMs;
+                       const isColFastest = c && c.best_ms != null && c.best_ms === occFastest[col.key];
+                       const groupStart = col.occ === 1;
+                  %>
+                    <td class="matrix-lane-cell <%= isRaceBest ? 'race-best' : '' %> <%= groupStart ? 'matrix-occ--group-start' : '' %>">
+                      <% if (c && c.best_ms != null) { %>
+                        <% if (isColFastest) { %><span class="lane-fastest-dot" title="<%= t('results.vuelta_rapida_del_carril') %>"></span><% } %><%= fmtSec(c.best_ms) %><% if (isRaceBest) { %><span class="race-best-tag" title="<%= t('results.vuelta_rapida_de_la_carrera') %>"><%= t('client.common.mejor') %></span><% } %>
+                      <% } else { %>—<% } %>
+                    </td>
+                  <% }) %>
+                <% } else { %>
+                  <% orderedLanes.forEach(lane => {
+                       const pl = laneMap.get(lane);
+                       const isRaceBest = pl && pl.best_ms != null && pl.best_ms === raceBestLapMs;
+                       const isLaneFastest = pl && pl.best_ms != null && pl.best_ms === laneFastest[lane];
+                       const isStart = lane === startLane;
+                  %>
+                    <td class="matrix-lane-cell <%= isRaceBest ? 'race-best' : '' %> <%= isLaneFastest ? 'lane-fastest' : '' %> <%= isStart ? 'matrix-lane-cell--start' : '' %>">
+                      <% if (pl && pl.best_ms != null) { %>
+                        <% if (isLaneFastest) { %><span class="lane-fastest-dot" title="<%= t('results.vuelta_rapida_del_carril') %>"></span><% } %><%= fmtSec(pl.best_ms) %><% if (isRaceBest) { %><span class="race-best-tag" title="<%= t('results.vuelta_rapida_de_la_carrera') %>"><%= t('client.common.mejor') %></span><% } %>
+                      <% } else { %>—<% } %>
+                    </td>
+                  <% }) %>
+                <% } %>
+              </tr>
+
+              <!-- Average row -->
+              <tr class="matrix-stat matrix-stat--avg">
+                <td class="matrix-stat__label"><%= t('results.media_gen_mejor_med') %></td>
+                <td class="matrix-stat__total"><%= fmtSec(Math.round(r.avg_lap_ms)) %><% if (bestAvgLane) { %><span class="stat-best-lane" title="<%= t('results.mejor_media_de_carril') %>"> / <%= fmtSec(Math.round(bestAvgMs)) %><span class="lane-rank">(<%= bestAvgLane %>)</span></span><% } %></td>
+                <% if (perOcc) { %>
+                  <% occColumns.forEach(col => {
+                       const c = (r.occByKey || {})[col.key];
+                       const groupStart = col.occ === 1;
+                  %>
+                    <td class="matrix-lane-cell <%= groupStart ? 'matrix-occ--group-start' : '' %>">
+                      <%= c && c.avg_ms != null ? fmtSec(Math.round(c.avg_ms)) : '—' %>
+                    </td>
+                  <% }) %>
+                <% } else { %>
+                  <% orderedLanes.forEach(lane => {
+                       const pl = laneMap.get(lane);
+                       const isStart = lane === startLane;
+                  %>
+                    <td class="matrix-lane-cell <%= isStart ? 'matrix-lane-cell--start' : '' %>">
+                      <%= pl && pl.avg_ms != null ? fmtSec(Math.round(pl.avg_ms)) : '—' %>
+                    </td>
+                  <% }) %>
+                <% } %>
+              </tr>
+
+              <!-- Consistency row (per lane) -->
+              <tr class="matrix-stat matrix-stat--cons">
+                <td class="matrix-stat__label"><%= t('results.const_sin') %></td>
+                <td class="matrix-stat__total">
+                  <% if (r.raceConsistency != null) { %><span class="res-cons <%= consClass(r.raceConsistencyLevel) %>"><%= fmtPct(r.raceConsistency) %></span><% } else { %>—<% } %>
+                </td>
+                <% if (perOcc) { %>
+                  <% occColumns.forEach(col => {
+                       const c = (r.occByKey || {})[col.key];
+                       const groupStart = col.occ === 1;
+                  %>
+                    <td class="matrix-lane-cell <%= groupStart ? 'matrix-occ--group-start' : '' %>">
+                      <% if (c && c.consistency != null) { %>
+                        <span class="res-cons <%= consClass(c.consistencyLevel) %>" title="<%= consLabel(c.consistencyLevel) %><%= c.consistencyStdMs != null ? ' · ' + fmtConsDe(c.consistencyStdMs) : '' %>"><%= fmtPct(c.consistency) %></span>
+                      <% } else { %>—<% } %>
+                    </td>
+                  <% }) %>
+                <% } else { %>
+                  <% orderedLanes.forEach(lane => {
+                       const pl = laneMap.get(lane);
+                       const isStart = lane === startLane;
+                  %>
+                    <td class="matrix-lane-cell <%= isStart ? 'matrix-lane-cell--start' : '' %>">
+                      <% if (pl && pl.consistency != null) { %>
+                        <span class="res-cons <%= consClass(pl.consistencyLevel) %>" title="<%= consLabel(pl.consistencyLevel) %><%= pl.consistencyStdMs != null ? ' · ' + fmtConsDe(pl.consistencyStdMs) : '' %>"><%= fmtPct(pl.consistency) %></span>
+                      <% } else { %>—<% } %>
+                    </td>
+                  <% }) %>
+                <% } %>
+              </tr>
+
+              <!-- Slowest + exits row -->
+              <tr class="matrix-stat matrix-stat--worst">
+                <td class="matrix-stat__label">
+                  <%= t('client.common.salidas') %>
+                  <span class="exit-total">(<%= (r.perLane||[]).reduce((s,pl)=>s+(pl.exit_count||0),0) %>)</span>
+                </td>
+                <td class="matrix-stat__total">—</td>
+                <% if (perOcc) { %>
+                  <% occColumns.forEach(col => {
+                       const c = (r.occByKey || {})[col.key];
+                       const groupStart = col.occ === 1;
+                  %>
+                    <td class="matrix-lane-cell <%= groupStart ? 'matrix-occ--group-start' : '' %>">
+                      <% if (c && c.worst_ms != null) { %>
+                        <span class="exit-count <%= c.exit_count > 0 ? 'has-exits' : '' %>">(<%= c.exit_count || 0 %>)</span>
+                        <%= fmtSec(c.worst_ms) %>
+                      <% } else { %>—<% } %>
+                    </td>
+                  <% }) %>
+                <% } else { %>
+                  <% orderedLanes.forEach(lane => {
+                       const pl = laneMap.get(lane);
+                       const isStart = lane === startLane;
+                  %>
+                    <td class="matrix-lane-cell <%= isStart ? 'matrix-lane-cell--start' : '' %>">
+                      <% if (pl && pl.worst_ms != null) { %>
+                        <span class="exit-count <%= pl.exit_count > 0 ? 'has-exits' : '' %>">(<%= pl.exit_count || 0 %>)</span>
+                        <%= fmtSec(pl.worst_ms) %>
+                      <% } else { %>—<% } %>
+                    </td>
+                  <% }) %>
+                <% } %>
+              </tr>
+
+              <!-- Pit-stops row -->
+              <%
+                const totalPitStops = (r.perLane||[]).reduce((s,pl)=>s+(pl.pit_stop_count||0),0);
+              %>
+              <tr class="matrix-stat matrix-stat--pit">
+                <td class="matrix-stat__label">
+                  <%= t('results.pit_stops_2') %>
+                  <span class="exit-total">(<%= totalPitStops %>)</span>
+                </td>
+                <td class="matrix-stat__total">—</td>
+                <% if (perOcc) { %>
+                  <% occColumns.forEach(col => {
+                       const c = (r.occByKey || {})[col.key];
+                       const lapsList = (c && c.pit_stop_laps)
+                         ? c.pit_stop_laps.split(',').filter(Boolean).map(n => 'V' + n).join(', ')
+                         : '';
+                       const groupStart = col.occ === 1;
+                  %>
+                    <td class="matrix-lane-cell <%= groupStart ? 'matrix-occ--group-start' : '' %>">
+                      <% if (c && c.pit_stop_count > 0) { %>
+                        <span class="exit-count has-exits">(<%= c.pit_stop_count %>)</span>
+                        <span class="pit-laps"><%= lapsList %></span>
+                      <% } else { %>—<% } %>
+                    </td>
+                  <% }) %>
+                <% } else { %>
+                  <% orderedLanes.forEach(lane => {
+                       const pl = laneMap.get(lane);
+                       const lapsList = (pl && pl.pit_stop_laps)
+                         ? pl.pit_stop_laps.split(',').filter(Boolean).map(n => 'V' + n).join(', ')
+                         : '';
+                       const isStart = lane === startLane;
+                  %>
+                    <td class="matrix-lane-cell <%= isStart ? 'matrix-lane-cell--start' : '' %>">
+                      <% if (pl && pl.pit_stop_count > 0) { %>
+                        <span class="exit-count has-exits">(<%= pl.pit_stop_count %>)</span>
+                        <span class="pit-laps"><%= lapsList %></span>
+                      <% } else { %>—<% } %>
+                    </td>
+                  <% }) %>
+                <% } %>
+              </tr>
+            <% }) %>
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+    <!-- ── Progression chart ── -->
+    <div class="results-panel" id="tab-progression">
+      <div class="progression-controls">
+        <div class="prog-control prog-control--wide">
+          <label><%= t('results.equipos_pilotos_compara') %></label>
+          <div id="progEntities" class="prog-entities"></div>
+        </div>
+        <div class="prog-control">
+          <label for="progManga"><%= t('common.manga') %></label>
+          <select id="progManga" class="prog-select" disabled title="<%= t('results.siempre_todas_las_mangas') %>"><option value="all"><%= t('client.common.todas') %></option></select>
+        </div>
+        <div class="prog-control">
+          <label for="progDriver"><%= t('client.common.piloto') %></label>
+          <select id="progDriver" class="prog-select"><option value="all"><%= t('common.todos') %></option></select>
+        </div>
+        <div class="prog-control">
+          <label>
+            <%= t('common.carriles') %>
+            <span class="prog-lane-actions">
+              <button type="button" id="progLanesAll"  class="prog-mini-btn"><%= t('common.todos') %></button>
+              <button type="button" id="progLanesNone" class="prog-mini-btn"><%= t('results.ninguno') %></button>
+            </span>
+          </label>
+          <div id="progLanes" class="prog-lanes"></div>
+        </div>
+        <div class="prog-control">
+          <label><%= t('results.mostrar') %></label>
+          <div class="prog-checks">
+            <label class="prog-check"><input type="checkbox" id="progShowExits" checked> <%= t('results.pinos') %></label>
+            <label class="prog-check"><input type="checkbox" id="progShowPits" checked> <%= t('results.pit_stops') %></label>
+          </div>
+        </div>
+        <div class="prog-subtabs">
+          <button class="prog-subtab active" data-prog="abs"><%= t('common.tiempo') %></button>
+          <button class="prog-subtab" data-prog="delta">Δ <%= t('results.delta_vs_media') %></button>
+        </div>
+      </div>
+      <div class="prog-chart-wrap" style="height: 620px;">
+        <canvas id="progChart"></canvas>
+      </div>
+      <p class="prog-hint">
+        <%= t('results.incluye_todas_las_vueltas_incluyendo_salidas_y') %>
+      </p>
+    </div>
+
+<style>
+  .progression-controls { display:flex; gap:1rem; align-items:flex-end; flex-wrap:wrap; margin-bottom:1rem; }
+  .prog-control { display:flex; flex-direction:column; gap:.25rem; }
+  .prog-control > label { color:#8b949e; font-size:.75rem; text-transform:uppercase; letter-spacing:.05em; }
+  .prog-select { background:#161b22; color:#c9d1d9; border:1px solid #30363d; border-radius:6px; padding:.45rem .7rem; font-size:.9rem; min-width:140px; }
+  .prog-control--wide { flex:1 1 100%; }
+  .prog-entities { display:flex; gap:.4rem; flex-wrap:wrap; padding:.3rem 0; max-height:120px; overflow-y:auto; }
+  .prog-entity-chip { display:inline-flex; align-items:center; gap:.35rem; padding:.3rem .7rem; border:1px solid #30363d; border-radius:14px; background:#161b22; color:#c9d1d9; font-size:.85rem; cursor:pointer; user-select:none; }
+  .prog-entity-chip.active { border-color:#1f6feb; color:#fff; font-weight:600; box-shadow:0 0 0 2px rgba(31,111,235,.18) inset; }
+  .prog-entity-chip__dot { width:9px; height:9px; border-radius:50%; }
+  .prog-lanes { display:flex; gap:.4rem; flex-wrap:wrap; padding:.3rem 0; }
+  .prog-lane-chip { display:inline-flex; align-items:center; gap:.3rem; padding:.25rem .55rem; border:1px solid #30363d; border-radius:14px; background:#161b22; color:#c9d1d9; font-size:.8rem; cursor:pointer; user-select:none; }
+  .prog-lane-chip.active { background:rgba(31,111,235,.2); border-color:#1f6feb; color:#58a6ff; font-weight:600; }
+  .prog-lane-chip__dot { width:8px; height:8px; border-radius:50%; }
+  .prog-lane-actions { display:inline-flex; gap:.3rem; margin-left:.5rem; }
+  .prog-mini-btn { background:#161b22; color:#8b949e; border:1px solid #30363d; border-radius:5px; padding:.1rem .5rem; font-size:.72rem; cursor:pointer; text-transform:none; letter-spacing:0; }
+  .prog-mini-btn:hover { border-color:#1f6feb; color:#58a6ff; }
+  .prog-checks { display:flex; gap:.8rem; padding:.35rem 0; }
+  .prog-check { display:inline-flex; align-items:center; gap:.3rem; color:#c9d1d9; font-size:.85rem; cursor:pointer; white-space:nowrap; }
+  .prog-check input { cursor:pointer; accent-color:#1f6feb; }
+  .prog-subtabs { display:inline-flex; gap:.3rem; margin-left:auto; }
+  .prog-subtab { background:#161b22; color:#8b949e; border:1px solid #30363d; padding:.45rem .8rem; border-radius:6px; cursor:pointer; font-size:.85rem; }
+  .prog-subtab.active { background:#1f6feb; color:#fff; border-color:#1f6feb; }
+  .prog-chart-wrap { background:#000000; border:1px solid #21262d; border-radius:12px; padding:1rem; height: 480px; }
+  .prog-hint { color:#6e7681; font-size:.78rem; margin-top:.6rem; font-style:italic; }
+</style>
+
+    <!-- ── Position timeline ── -->
+    <div class="results-panel" id="tab-positions">
+      <div class="prog-chart-wrap" style="height: 560px;">
+        <canvas id="positionsChart"></canvas>
+      </div>
+      <p class="prog-hint">
+        <%= t('results.cada_linea_muestra_la_posicion_de_un_equipo') %>
+      </p>
+    </div>
+
+    <!-- ── Gap to leader (lap gap over race time) ── -->
+    <div class="results-panel" id="tab-gap">
+      <div class="progression-controls">
+        <div class="prog-control">
+          <label for="gapFrom"><%= t('results.desde_manga') %></label>
+          <select id="gapFrom" class="prog-select"></select>
+        </div>
+        <div class="prog-control">
+          <label for="gapTo"><%= t('results.hasta_manga') %></label>
+          <select id="gapTo" class="prog-select"></select>
+        </div>
+        <div class="prog-control">
+          <label>&nbsp;</label>
+          <button type="button" id="gapReset" class="prog-subtab">↺ <%= t('client.common.todas') %></button>
+        </div>
+      </div>
+      <div class="prog-chart-wrap" style="height: 560px;">
+        <canvas id="gapChart"></canvas>
+      </div>
+      <p class="prog-hint">
+        <%= t('results.vueltas_que_cada_equipo_piloto_lleva_por_detras') %>
+      </p>
+    </div>
+    <script id="gapData" type="application/json"><%- JSON.stringify(gapData || {}) %></script>
+    <script id="mangaTimes" type="application/json"><%- JSON.stringify(mangaTimes || {}) %></script>
+
+    <!-- ── Gap to leader (grid / matrix) ── -->
+    <div class="results-panel" id="tab-gapgrid">
+      <div class="prog-control prog-control--wide">
+        <label><%= t('results.comparar_equipos_elige_2_4_vacio_todos_vs_lider') %></label>
+        <div id="gapgridEntities" class="prog-entities"></div>
+      </div>
+      <div class="gapgrid-wrap">
+        <table class="gapgrid" id="gapgridTable"></table>
+      </div>
+      <p class="prog-hint">
+        <%= t('results.vueltas_tras_el_lider_al_cierre_de_cada_manga_0') %>
+      </p>
+    </div>
+
+    <style>
+      .gapgrid-wrap { overflow-x: auto; border: 1px solid #21262d; border-radius: 12px; }
+      .gapgrid { border-collapse: collapse; width: 100%; font-size: .82rem; font-variant-numeric: tabular-nums; }
+      .gapgrid th, .gapgrid td { padding: .35rem .5rem; text-align: right; white-space: nowrap; border-bottom: 1px solid #161b22; }
+      .gapgrid thead th { position: sticky; top: 0; background: #1f3a5f; color: #fff; font-weight: 700; z-index: 2; }
+      .gapgrid__name { text-align: left !important; position: sticky; left: 0; background: #0d1117; z-index: 1; max-width: 200px; overflow: hidden; text-overflow: ellipsis; }
+      .gapgrid thead .gapgrid__name { z-index: 3; background: #1f3a5f; }
+      .gapgrid__time { display: block; font-size: .7rem; font-weight: 400; opacity: .75; }
+      .gapgrid__time--newday { opacity: 1; color: #f0b72f; }
+      .gapgrid tbody tr:hover td { background: rgba(255,255,255,.03); }
+      .gapgrid__dot { display: inline-block; width: 9px; height: 9px; border-radius: 50%; margin-right: .4rem; vertical-align: middle; }
+      .gapgrid td { color: #c9d1d9; position: relative; }
+      /* Pit-stop en esa manga → borde dorado llamativo. */
+      .gapgrid td.gapgrid--pit { box-shadow: inset 0 0 0 2px #f0b72f; border-radius: 3px; font-weight: 700; }
+    </style>
+
+    <!-- ── Advanced stats (per-pilot deep dive + head-to-head) ── -->
+    <div class="results-panel" id="tab-advanced">
+      <div class="adv-controls">
+        <label>
+          <%= t('results.equipo_piloto') %>
+          <select id="advEntity" class="prog-select"></select>
+        </label>
+        <label>
+          <%= t('results.comparar_con') %>
+          <select id="advCompare" class="prog-select">
+            <option value=""><%= t('results.sin_comparar') %></option>
+          </select>
+        </label>
+        <label style="cursor:pointer; user-select:none">
+          <input type="checkbox" id="advIncludeOutliers"> <%= t('results.con_salidas_pit_stops') %>
+        </label>
+      </div>
+
+      <div class="adv-panels" id="advPanels"></div>
+    </div>
+
+    <style>
+      .adv-controls { display:flex; gap:1.2rem; align-items:center; flex-wrap:wrap; margin-bottom:1.2rem }
+      .adv-controls label { color:#8b949e; font-size:.85rem; display:flex; align-items:center; gap:.4rem }
+      .adv-panels { display:grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap:.7rem }
+      .adv-card { background:#161b22; border:1px solid #30363d; border-radius:10px; padding:.8rem 1rem }
+      .adv-card__label { color:#8b949e; font-size:.72rem; text-transform:uppercase; letter-spacing:.05em }
+      .adv-card__big { font-family:'Share Tech Mono', monospace; color:#e6edf3; font-size:1.6rem; font-weight:700; margin-top:.15rem }
+      .adv-card__hint { color:#6e7681; font-size:.75rem; margin-top:.15rem }
+      .adv-card--wide { grid-column: 1 / -1 }
+      .adv-manga-chart { height:260px; background:#000000; border:1px solid #21262d; border-radius:10px; padding:.6rem; margin:.5rem 0 .8rem }
+      .adv-mangas { display:flex; gap:.5rem; flex-wrap:wrap; margin-top:.3rem }
+      .adv-manga { flex:0 0 auto; background:#000000; border:1px solid #21262d; border-radius:8px; padding:.5rem .7rem; min-width:100px }
+      .adv-manga__lbl { color:#6e7681; font-size:.7rem; text-transform:uppercase; letter-spacing:.05em }
+      .adv-manga__val { font-family:'Share Tech Mono', monospace; color:#c9d1d9; font-weight:700; font-size:1rem }
+      .adv-manga__meta { color:#6e7681; font-size:.7rem }
+      .adv-compare-table { width:100%; border-collapse:collapse; font-size:.92rem }
+      .adv-compare-table th, .adv-compare-table td { padding:.5rem .7rem; border-bottom:1px solid #21262d; color:#c9d1d9 }
+      .adv-compare-table th { color:#8b949e; font-size:.72rem; text-transform:uppercase; letter-spacing:.05em; background:#000000 }
+      .adv-diff--better { color:#3fb950; font-weight:700 }
+      .adv-diff--worse  { color:#f85149; font-weight:700 }
+      /* Tarjetas en modo comparación: valor A (dorado) vs valor B (azul) + Δ */
+      .adv-card__cmp { display:flex; align-items:baseline; gap:.45rem; margin-top:.2rem; font-family:'Share Tech Mono', monospace; font-weight:700; font-size:1.2rem; flex-wrap:wrap }
+      .adv-cmp-a { color:#f6c90e }
+      .adv-cmp-b { color:#58a6ff }
+      .adv-cmp-sep { color:#6e7681; font-size:.7rem; font-weight:400 }
+      .adv-card__diff { font-family:'Share Tech Mono', monospace; font-size:.82rem; margin-top:.25rem; color:#8b949e }
+      .adv-card__diff.adv-diff--better { color:#3fb950 }
+      .adv-card__diff.adv-diff--worse  { color:#f85149 }
+    </style>
+
+    <script id="advancedStatsData" type="application/json"><%- JSON.stringify(advancedStats || []) %></script>
+    <script>
+      (function() {
+        const data = JSON.parse(document.getElementById('advancedStatsData').textContent || '[]');
+        if (data.length === 0) return;
+        const selEntity  = document.getElementById('advEntity');
+        const selCompare = document.getElementById('advCompare');
+        const cbOutliers = document.getElementById('advIncludeOutliers');
+        const panels     = document.getElementById('advPanels');
+        let includeOutliers = false;
+
+        // Populate selects
+        data.forEach(e => {
+          selEntity.innerHTML  += `<option value="${e.key}">${e.entityName}</option>`;
+          selCompare.innerHTML += `<option value="${e.key}">${e.entityName}</option>`;
+        });
+        selEntity.value = data[0].key;
+
+        function fmtMs(ms) { return ms == null ? '—' : (ms/1000).toFixed(3).replace('.', ',') + 's'; }
+        function fmtSec(ms) { return ms == null ? '—' : (ms/1000).toFixed(2).replace('.', ',') + 's'; }
+        function getStat(e, key) {
+          if (key === 'avg')   return includeOutliers ? e.avgAll   : e.avgClean;
+          if (key === 'delta') return includeOutliers ? e.deltaAll : e.deltaClean;
+          return e[key];
+        }
+
+        // Tarjeta de una sola métrica en modo COMPARACIÓN: valor de A (dorado) vs
+        // valor de B (azul) y la Δ coloreada desde la óptica de A (verde = A mejor).
+        // cmp: 'higher' (más es mejor), 'lower'/'lowerMs' (menos es mejor).
+        function cmpCard(label, aDisp, bDisp, cmp, aNum, bNum) {
+          const an = aNum != null ? aNum : (typeof aDisp === 'number' ? aDisp : null);
+          const bn = bNum != null ? bNum : (typeof bDisp === 'number' ? bDisp : null);
+          let cls = '', badge = '—';
+          if (an != null && bn != null) {
+            const d = an - bn;
+            let diff;
+            if (cmp === 'lowerMs') { diff = (d > 0 ? '+' : '') + (d/1000).toFixed(2).replace('.',',') + 's'; cls = d < 0 ? 'adv-diff--better' : (d > 0 ? 'adv-diff--worse' : ''); }
+            else { diff = (d > 0 ? '+' : '') + d; if (cmp === 'higher') cls = d > 0 ? 'adv-diff--better' : (d < 0 ? 'adv-diff--worse' : ''); else cls = d < 0 ? 'adv-diff--better' : (d > 0 ? 'adv-diff--worse' : ''); }
+            badge = 'Δ ' + diff;
+          }
+          return `
+            <div class="adv-card">
+              <div class="adv-card__label">${label}</div>
+              <div class="adv-card__cmp">
+                <span class="adv-cmp-a">${aDisp}</span>
+                <span class="adv-cmp-sep">vs</span>
+                <span class="adv-cmp-b">${bDisp}</span>
+              </div>
+              <div class="adv-card__diff ${cls}">${badge}</div>
+            </div>`;
+        }
+
+        // Tarjeta ancha con el gráfico de evolución por carril + mini-tarjetas
+        // (entidad A; el gráfico ya superpone A y B).
+        function wideCard(a) {
+          return `
+            <div class="adv-card adv-card--wide">
+              <div class="adv-card__label">${I18N.t('client.results.evolucion_carril')}</div>
+              <div class="adv-manga-chart"><canvas id="advMangaChart"></canvas></div>
+              <div class="adv-mangas">
+                ${(a.perLane || []).map(p => `
+                  <div class="adv-manga">
+                    <div class="adv-manga__lbl">${I18N.t('client.results.pista_n', { n: p.lane })}</div>
+                    <div class="adv-manga__val">${fmtMs(includeOutliers ? p.avgAll : p.avgClean)}</div>
+                    <div class="adv-manga__meta">${I18N.t('client.results.vueltas_salidas', { v: p.totalLaps, s: p.exitCount })}</div>
+                  </div>
+                `).join('')}
+              </div>
+            </div>`;
+        }
+
+        function renderEntity(a, b) {
+          const avg   = getStat(a, 'avg');
+          const delta = getStat(a, 'delta');
+          // Sin comparación: tarjetas de una sola entidad (número grande).
+          if (!b) {
+            panels.innerHTML = `
+              <div class="adv-card">
+                <div class="adv-card__label">${I18N.t('client.results.total_vueltas')}</div>
+                <div class="adv-card__big">${a.totalLaps}</div>
+                <div class="adv-card__hint">${I18N.t('client.results.n_limpias', { n: a.cleanLaps })}</div>
+              </div>
+              <div class="adv-card">
+                <div class="adv-card__label">${I18N.t('client.results.mejor_vuelta')}</div>
+                <div class="adv-card__big">${fmtMs(a.bestMs)}</div>
+              </div>
+              <div class="adv-card">
+                <div class="adv-card__label">${includeOutliers ? I18N.t('client.results.media_con_salidas') : I18N.t('client.results.media_limpia')}</div>
+                <div class="adv-card__big">${fmtMs(avg)}</div>
+              </div>
+              <div class="adv-card">
+                <div class="adv-card__label">${I18N.t('client.results.delta_consistencia')}</div>
+                <div class="adv-card__big">${delta != null ? '+' + fmtSec(delta) : '—'}</div>
+                <div class="adv-card__hint">avg − best</div>
+              </div>
+              <div class="adv-card">
+                <div class="adv-card__label">${I18N.t('client.results.salidas_pits')}</div>
+                <div class="adv-card__big">${a.exitCount} · ${a.pitStopCount}</div>
+              </div>
+              <div class="adv-card">
+                <div class="adv-card__label">${I18N.t('client.results.tiempo_perdido')}</div>
+                <div class="adv-card__big">${fmtSec(a.lostMs)}</div>
+                <div class="adv-card__hint">${I18N.t('client.results.aprox_vueltas', { n: a.lostLapsEquiv })}</div>
+              </div>
+              ${wideCard(a)}
+            `;
+            return;
+          }
+          // Con comparación: cada tarjeta enfrenta A (dorado) vs B (azul).
+          const avgB   = getStat(b, 'avg');
+          const deltaB = getStat(b, 'delta');
+          panels.innerHTML =
+            cmpCard(I18N.t('client.results.total_vueltas'), a.totalLaps, b.totalLaps, 'higher', a.totalLaps, b.totalLaps) +
+            cmpCard(I18N.t('client.results.mejor_vuelta'), fmtMs(a.bestMs), fmtMs(b.bestMs), 'lowerMs', a.bestMs, b.bestMs) +
+            cmpCard(includeOutliers ? I18N.t('client.results.media_con_salidas') : I18N.t('client.results.media_limpia'), fmtMs(avg), fmtMs(avgB), 'lowerMs', avg, avgB) +
+            cmpCard(I18N.t('client.results.delta_consistencia'), delta != null ? '+' + fmtSec(delta) : '—', deltaB != null ? '+' + fmtSec(deltaB) : '—', 'lowerMs', delta, deltaB) +
+            cmpCard(I18N.t('client.results.salidas'), a.exitCount, b.exitCount, 'lower', a.exitCount, b.exitCount) +
+            cmpCard('Pit-stops', a.pitStopCount, b.pitStopCount, 'lower', a.pitStopCount, b.pitStopCount) +
+            cmpCard(I18N.t('client.results.tiempo_perdido'), fmtSec(a.lostMs), fmtSec(b.lostMs), 'lowerMs', a.lostMs, b.lostMs) +
+            wideCard(a);
+        }
+
+        // Gráfico de evolución de la media POR CARRIL (entidad + comparada).
+        let mangaChart = null;
+        function drawMangaChart(a, b) {
+          const canvas = document.getElementById('advMangaChart');
+          if (!canvas || typeof Chart === 'undefined') return;   // Chart.js carga después en la 1ª pasada
+          if (mangaChart) { mangaChart.destroy(); mangaChart = null; }
+          const key = includeOutliers ? 'avgAll' : 'avgClean';
+          const labels = (a.perLane || []).map(p => 'P' + p.lane);
+          const datasets = [{
+            label: a.entityName,
+            data: (a.perLane || []).map(p => p[key] != null ? p[key] / 1000 : null),
+            borderColor: '#f6c90e', backgroundColor: 'rgba(246,201,14,.15)',
+            tension: .25, spanGaps: true, pointRadius: 3, borderWidth: 2,
+          }];
+          if (b) {
+            const bByLane = new Map((b.perLane || []).map(p => [p.lane, p]));
+            datasets.push({
+              label: b.entityName,
+              data: (a.perLane || []).map(p => { const bp = bByLane.get(p.lane); return bp && bp[key] != null ? bp[key] / 1000 : null; }),
+              borderColor: '#58a6ff', backgroundColor: 'rgba(88,166,255,.15)',
+              tension: .25, spanGaps: true, pointRadius: 3, borderWidth: 2,
+            });
+          }
+          mangaChart = new Chart(canvas, {
+            type: 'line',
+            data: { labels, datasets },
+            options: {
+              responsive: true, maintainAspectRatio: false,
+              interaction: { mode: 'index', intersect: false },
+              plugins: {
+                legend: { labels: { color: '#c9d1d9' } },
+                tooltip: { callbacks: { label: (ctx) => ctx.dataset.label + ': ' + ctx.parsed.y.toFixed(3).replace('.', ',') + 's' } },
+              },
+              scales: {
+                x: { ticks: { color: '#8b949e' }, grid: { color: '#21262d' } },
+                y: { ticks: { color: '#8b949e', callback: (v) => v.toFixed(2).replace('.', ',') + 's' },
+                     grid: { color: '#21262d' },
+                     title: { display: true, text: I18N.t('client.results.media_por_carril'), color: '#6e7681' } },
+              },
+            },
+          });
+        }
+
+        function update() {
+          const a = data.find(e => e.key === selEntity.value);
+          const b = data.find(e => e.key === selCompare.value);
+          if (a) renderEntity(a, b);
+          if (a) drawMangaChart(a, b);
+        }
+
+        selEntity.addEventListener('change',  update);
+        selCompare.addEventListener('change', update);
+        cbOutliers.addEventListener('change', () => { includeOutliers = cbOutliers.checked; update(); });
+
+        document.querySelector('[data-tab="advanced"]')?.addEventListener('click', () => setTimeout(update, 50));
+        update();
+      })();
+    </script>
+
+<script>
+  // Ajuste a una sola hoja al imprimir: escala el contenido (zoom) para que la
+  // comparativa completa quepa en un A3 apaisado, por largo que sea el listado.
+  (function () {
+    const PAGE_W = 1040, PAGE_H = 1500; // A3 vertical menos márgenes de 10mm, en px CSS
+    const wrap = document.querySelector('.vt-page--results .vt-wrap');
+    if (!wrap) return;
+    let prev = null;
+    window.addEventListener('beforeprint', () => {
+      const table = wrap.querySelector('.matrix-table');
+      if (!table) return;
+      prev = { width: wrap.style.width, zoom: wrap.style.zoom };
+      // Siempre se imprime la comparativa: forzarla visible para medirla
+      // aunque el usuario esté en otra pestaña.
+      wrap.querySelectorAll('.results-panel').forEach(p => {
+        p.style.display = p.id === 'tab-matrix' ? 'block' : 'none';
+      });
+      // Anchura natural de la tabla: el contenido se maqueta a ese ancho y se
+      // escala; así las celdas no cambian de altura entre pantalla y papel.
+      const w = Math.max(table.scrollWidth, PAGE_W);
+      wrap.style.width = w + 'px';
+      // Altura del flujo a ese ancho, descontando lo que el CSS de impresión
+      // oculta. Sin tope superior: si sobra hoja, la fuente crece hasta llenarla.
+      let hiddenH = 0;
+      wrap.querySelectorAll('.results-tabs, .vt-back-link, .print-hide')
+          .forEach(el => { hiddenH += el.offsetHeight; });
+      const h = wrap.scrollHeight - hiddenH;
+      wrap.style.zoom = Math.min(PAGE_W / w, PAGE_H / h);
+    });
+    window.addEventListener('afterprint', () => {
+      if (!prev) return;
+      wrap.style.width = prev.width;
+      wrap.style.zoom  = prev.zoom;
+      wrap.querySelectorAll('.results-panel').forEach(p => { p.style.display = ''; });
+      prev = null;
+    });
+  })();
+</script>
+<script id="positionsData" type="application/json"><%- JSON.stringify(positionData || {}) %></script>
+<script id="progressionData" type="application/json"><%- JSON.stringify(progressionByEntity || {}) %></script>
+<script>const PER_OCCURRENCE = <%= perOccurrence ? 'true' : 'false' %>;</script>
+<!-- Chart.js SERVIDO POR NOSOTROS, no desde un CDN: en un circuito no siempre hay
+     internet, y esta página era la única del proyecto que dependía de ello — sin
+     línea, las gráficas de resultados no salían. Es el mismo fichero que ya usa
+     live-stats. -->
+<script src="/js/chart.umd.min.js"></script>
+<script>
+  (function() {
+    // Datos vuelta-a-vuelta: pueden ser muy grandes (carreras de 24h ≈ 12 MB).
+    // No los parseamos al cargar la página — eso bloquea móviles antes de cablear
+    // los botones. Se parsean en diferido al abrir la pestaña Progresión.
+    let data = {};
+    const entitiesBox = document.getElementById('progEntities');
+    const selManga    = document.getElementById('progManga');
+    const selDriver   = document.getElementById('progDriver');
+    const lanesBox    = document.getElementById('progLanes');
+    const canvas      = document.getElementById('progChart');
+    if (!entitiesBox || !canvas) return;
+    const ENTITY_PALETTE = ['#58a6ff','#f6c90e','#7ee787','#ff6b9d','#a371f7','#56d4dd','#f97316','#e63946','#fbbf24','#34d399'];
+    // Lane variation: solid for first lane, dashed for second, dotted for third...
+    const LANE_DASH = [[], [8,4], [2,4], [12,3,2,3]];
+    let chart = null;
+    let mode  = 'abs';
+    const enabledLanes = new Set();
+    const selectedEntities = new Set();
+    const entityColor = {};
+
+    function renderEntities() {
+      const entries = Object.entries(data);
+      entries.forEach(([key], i) => { entityColor[key] = ENTITY_PALETTE[i % ENTITY_PALETTE.length]; });
+      entitiesBox.innerHTML = entries.map(([key, e]) => {
+        const active = selectedEntities.has(key) ? 'active' : '';
+        const color = entityColor[key];
+        return `<span class="prog-entity-chip ${active}" data-key="${key}" style="${selectedEntities.has(key) ? 'background:' + color + '22;' : ''}">
+          <span class="prog-entity-chip__dot" style="background:${color}"></span>${e.name}
+        </span>`;
+      }).join('');
+      entitiesBox.querySelectorAll('.prog-entity-chip').forEach(chip => {
+        chip.addEventListener('click', () => {
+          const key = chip.dataset.key;
+          if (selectedEntities.has(key)) selectedEntities.delete(key);
+          else selectedEntities.add(key);
+          renderEntities();
+          refreshFilters();
+          build();
+        });
+      });
+    }
+
+    function collectLaps() {
+      const out = [];
+      selectedEntities.forEach(key => {
+        const e = data[key];
+        if (e) e.laps.forEach(l => out.push({ ...l, _entity: key, _entityName: e.name }));
+      });
+      return out;
+    }
+
+    function refreshFilters() {
+      const laps = collectLaps();
+      // Manga options
+      const mangas = [...new Set(laps.map(l => l.manga))].sort((a,b)=>a-b);
+      const prevManga = selManga.value;
+      selManga.innerHTML = '<option value="all">' + I18N.t('client.results.todas') + '</option>' +
+        mangas.map(m => `<option value="${m}">${I18N.t('client.results.manga_n', { n: m })}</option>`).join('');
+      if ([...selManga.options].some(o => o.value === prevManga)) selManga.value = prevManga;
+      // Driver options
+      const drivers = [...new Set(laps.map(l => l.driver).filter(d => d && d !== '—'))].sort();
+      const prevDriver = selDriver.value;
+      selDriver.innerHTML = '<option value="all">' + I18N.t('client.results.todos') + '</option>' +
+        drivers.map(d => `<option value="${d}">${d}</option>`).join('');
+      if ([...selDriver.options].some(o => o.value === prevDriver)) selDriver.value = prevDriver;
+      selDriver.parentElement.style.display = drivers.length > 0 ? '' : 'none';
+      // Lanes chips
+      const lanes = [...new Set(laps.map(l => l.lane))].sort((a,b)=>a-b);
+      // Keep previously enabled lanes that still exist; default-enable any new ones
+      const prevEnabled = new Set(enabledLanes);
+      enabledLanes.clear();
+      lanes.forEach(l => { if (prevEnabled.size === 0 || prevEnabled.has(l)) enabledLanes.add(l); });
+      if (enabledLanes.size === 0) lanes.forEach(l => enabledLanes.add(l));
+      lanesBox.innerHTML = lanes.map(lane => {
+        const cls = enabledLanes.has(lane) ? 'active' : '';
+        return `<span class="prog-lane-chip ${cls}" data-lane="${lane}">P${lane}</span>`;
+      }).join('');
+      lanesBox.querySelectorAll('.prog-lane-chip').forEach(chip => {
+        chip.addEventListener('click', () => {
+          const lane = Number(chip.dataset.lane);
+          if (enabledLanes.has(lane)) { enabledLanes.delete(lane); chip.classList.remove('active'); }
+          else { enabledLanes.add(lane); chip.classList.add('active'); }
+          build();
+        });
+      });
+    }
+
+    function build() {
+      if (selectedEntities.size === 0) {
+        if (chart) { chart.destroy(); chart = null; }
+        const ctx = canvas.getContext('2d');
+        ctx.clearRect(0, 0, canvas.width, canvas.height);
+        return;
+      }
+      const mangaFilter  = 'all';   // selector deshabilitado: siempre todas las mangas
+      const driverFilter = selDriver.value;
+      const showExits = document.getElementById('progShowExits')?.checked ?? true;
+      const showPits  = document.getElementById('progShowPits')?.checked  ?? true;
+      const lanes = [...enabledLanes].sort((a,b)=>a-b);
+      const datasets = [];
+      const allMs = [];
+      const ys = [];   // todos los valores PINTADOS, para calcular el rango del eje Y
+
+      [...selectedEntities].forEach(key => {
+        const entity = data[key];
+        if (!entity) return;
+        const color = entityColor[key];
+        lanes.forEach((lane, laneIdx) => {
+          const filtered = entity.laps.filter(l =>
+            l.lane === lane
+            && (mangaFilter === 'all' || String(l.manga) === mangaFilter)
+            && (driverFilter === 'all' || l.driver === driverFilter)
+            // Un pit-stop también lleva is_exit=1; las categorías son EXCLUYENTES:
+            // pit-stop → check de pits; salida pura (exit sin pit) → check de piños.
+            && (l.isPitStop ? showPits : (l.isExit ? showExits : true))
+          );
+          if (filtered.length === 0) return;
+
+          // En carreras de PASADAS / REPETIR-CARRIL una misma entidad corre el
+          // mismo carril en varias mangas. Cada manga distinta = una OCURRENCIA
+          // (repetición) de ese carril. Dibujamos UNA LÍNEA POR OCURRENCIA para
+          // poder comparar la progresión de cada repetición; el eje X pasa a ser
+          // el índice de vuelta DENTRO de la ocurrencia (1..n) para que las
+          // repeticiones se solapen y se lean una sobre otra.
+          let occurrences;
+          if (PER_OCCURRENCE) {
+            const byManga = new Map();
+            filtered.forEach(l => {
+              if (!byManga.has(l.manga)) byManga.set(l.manga, []);
+              byManga.get(l.manga).push(l);
+            });
+            const mangasOrdered = [...byManga.keys()].sort((a, b) => a - b);
+            const K = mangasOrdered.length;
+            occurrences = mangasOrdered.map((m, i) => ({
+              laps: byManga.get(m),
+              // Etiqueta "<entidad> · P<L> · k/K"
+              label: entity.name + ' · P' + lane + ' · ' + (i + 1) + '/' + K,
+              occIdx: i,
+            }));
+          } else {
+            // Modo normal: una sola línea por carril (comportamiento previo).
+            occurrences = [{ laps: filtered, label: entity.name + ' · P' + lane, occIdx: 0 }];
+          }
+
+          occurrences.forEach(occ => {
+            const laps = occ.laps;
+            laps.forEach(l => allMs.push(l.ms));
+            const avg = laps.reduce((s, l) => s + l.ms, 0) / laps.length;
+            const points = laps.map((l, idx) => ({
+              x: idx + 1,
+              y: mode === 'abs' ? l.ms / 1000 : (l.ms - avg) / 1000,
+              _meta: l, _entityName: entity.name,
+            }));
+            points.forEach(p => ys.push(p.y));
+            const pointColors = laps.map(l =>
+              l.isPitStop ? '#ff9800' :
+              l.isExit    ? '#e63946' : color);
+            // Vueltas normales sin punto (radio 0) → línea limpia aunque haya
+            // 100+ vueltas/manga; solo se ven los marcadores de salida y pit.
+            // pointHitRadius mantiene el tooltip al pasar por cualquier vuelta.
+            const pointRadius = laps.map(l => (l.isPitStop || l.isExit) ? 5 : 0);
+            // Distinción visual: en modo normal el patrón de guiones representa
+            // el carril (laneIdx); en per-ocurrencia todas comparten carril, así
+            // que el patrón (y un ligero grosor decreciente) distingue la
+            // repetición manteniendo el color de la entidad.
+            const dashIdx = PER_OCCURRENCE ? occ.occIdx : laneIdx;
+            datasets.push({
+              label: occ.label,
+              data: points,
+              borderColor: color,
+              backgroundColor: color + '22',
+              borderDash: LANE_DASH[dashIdx % LANE_DASH.length],
+              pointBackgroundColor: pointColors,
+              pointBorderColor:     pointColors,
+              pointRadius,
+              pointHoverRadius: laps.map(l => (l.isPitStop || l.isExit) ? 7 : 4),
+              pointHitRadius: 6,
+              tension: 0.2, borderWidth: 2,
+            });
+          });
+        });
+      });
+
+      // Eje Y: hasta el valor MÁS GRANDE pintado + 2 (para no cortar los picos),
+      // y abajo el percentil 1 − 1 (ignora outliers bajos puntuales —out-lap,
+      // parciales— que dejaban un hueco muerto abajo y aplastaban la información).
+      let yMin, yMax;
+      if (ys.length) {
+        ys.sort((a, b) => a - b);
+        const lo = ys[Math.floor(ys.length * 0.01)];
+        const hi = ys[ys.length - 1];
+        yMin = Math.floor(lo) - 1;
+        yMax = Math.ceil(hi) + 2;
+      }
+
+      if (chart) chart.destroy();
+      chart = new Chart(canvas, {
+        type: 'line',
+        data: { datasets },
+        options: {
+          responsive: true, maintainAspectRatio: false,
+          plugins: {
+            legend: { labels: { color: '#c9d1d9', boxWidth: 14 } },
+            tooltip: {
+              callbacks: {
+                label: (ctx) => {
+                  const v = ctx.parsed.y;
+                  const m = ctx.raw._meta;
+                  const sign = mode === 'delta' && v > 0 ? '+' : '';
+                  let s = ctx.dataset.label + ': ' + sign + v.toFixed(3) + 's';
+                  if (m?.driver && m.driver !== '—') s += ' · ' + m.driver;
+                  if (m?.manga) s += ' · M' + m.manga;
+                  if (m?.isPitStop) s += ' · pit-stop';
+                  else if (m?.isExit) s += ' · <%= t('results.salida') %>';
+                  return s;
+                }
+              }
+            }
+          },
+          scales: {
+            x: {
+              type: 'linear',
+              title: { display: true, text: PER_OCCURRENCE ? I18N.t('client.results.vuelta_repeticion') : I18N.t('client.results.vuelta_cronologico'), color: '#8b949e' },
+              ticks: { color: '#8b949e', stepSize: 1 },
+              grid:  { color: '#21262d' },
+            },
+            y: {
+              min: yMin, max: yMax,
+              title: { display: true,
+                text: mode === 'abs' ? I18N.t('client.results.segundos') : I18N.t('client.results.delta_vs_media'), color: '#8b949e' },
+              ticks: { color: '#8b949e' },
+              grid:  { color: '#21262d',
+                       drawBorder: false,
+                       lineWidth: (ctx) => (mode === 'delta' && ctx.tick.value === 0) ? 2 : 1,
+                       color:     (ctx) => (mode === 'delta' && ctx.tick.value === 0) ? '#58a6ff' : '#21262d' },
+            }
+          }
+        }
+      });
+    }
+
+    selManga.addEventListener('change', build);
+    selDriver.addEventListener('change', build);
+    document.getElementById('progShowExits')?.addEventListener('change', build);
+    document.getElementById('progShowPits')?.addEventListener('change', build);
+    // Carriles: seleccionar / deseleccionar todos.
+    function setAllLanes(on) {
+      lanesBox.querySelectorAll('.prog-lane-chip').forEach(chip => {
+        const lane = Number(chip.dataset.lane);
+        if (on) { enabledLanes.add(lane);    chip.classList.add('active'); }
+        else    { enabledLanes.delete(lane); chip.classList.remove('active'); }
+      });
+      build();
+    }
+    document.getElementById('progLanesAll') ?.addEventListener('click', () => setAllLanes(true));
+    document.getElementById('progLanesNone')?.addEventListener('click', () => setAllLanes(false));
+    document.querySelectorAll('.prog-subtab').forEach(btn => {
+      btn.addEventListener('click', () => {
+        document.querySelectorAll('.prog-subtab').forEach(b => b.classList.remove('active'));
+        btn.classList.add('active');
+        mode = btn.dataset.prog;
+        build();
+      });
+    });
+
+    // Inicialización perezosa: solo al abrir la pestaña por primera vez se
+    // parsean los datos (potencialmente enormes) y se pinta el primer equipo.
+    let initialized = false;
+    function initProgression() {
+      if (initialized) return;
+      initialized = true;
+      data = JSON.parse(document.getElementById('progressionData').textContent || '{}');
+      const firstKey = Object.keys(data)[0];
+      if (firstKey) selectedEntities.add(firstKey);
+      renderEntities();
+      refreshFilters();
+    }
+
+    document.querySelector('[data-tab="progression"]')?.addEventListener('click', () => {
+      setTimeout(() => { initProgression(); build(); }, 50);
+    });
+  })();
+
+  // ── Position-per-manga chart ───────────────────────────────────────────
+  // Clasificación acumulada al cierre de cada manga (no cruce a cruce).
+  (function() {
+    const data   = JSON.parse(document.getElementById('positionsData').textContent || '{}');
+    const canvas = document.getElementById('positionsChart');
+    if (!canvas) return;
+    const PALETTE = ['#1F6FEB','#F6C90E','#2DA44E','#FB6A6B','#A371F7','#16BDCA','#F97316','#E63946','#FBBF24','#34D399','#FF6B9D','#56D4DD'];
+    let chart = null;
+
+    function build() {
+      const entries = Object.entries(data);
+      if (entries.length === 0) return;
+      const totalEntities = entries.length;
+      const datasets = entries.map(([key, e], i) => ({
+        label: e.name,
+        data: (e.points || []),   // {x: minuto de carrera, y: posición proyectada}
+        borderColor: e.color || PALETTE[i % PALETTE.length],
+        backgroundColor: (e.color || PALETTE[i % PALETTE.length]) + '22',
+        tension: 0.25, spanGaps: true,
+        pointRadius: 3, pointHoverRadius: 6, borderWidth: 2.5,
+      }));
+      if (chart) chart.destroy();
+      chart = new Chart(canvas, {
+        type: 'line',
+        data: { datasets },
+        options: {
+          responsive: true, maintainAspectRatio: false,
+          interaction: { mode: 'nearest', intersect: false },
+          plugins: {
+            legend: { position: 'right', labels: { color: '#c9d1d9', boxWidth: 14 } },
+            tooltip: {
+              callbacks: {
+                title: (items) => 'min ' + items[0].parsed.x,
+                label: (ctx) => ctx.dataset.label + ': P' + ctx.parsed.y,
+              }
+            }
+          },
+          scales: {
+            x: {
+              type: 'linear',
+              title: { display: true, text: <%- JSON.stringify(t('results.tiempo_de_carrera_min')) %>, color: '#8b949e' },
+              ticks: { color: '#8b949e' }, grid: { color: '#21262d' },
+            },
+            y: {
+              reverse: true, // P1 at top
+              min: 1, max: totalEntities,
+              title: { display: true, text: <%- JSON.stringify(t('results.posicion_proyectada')) %>, color: '#8b949e' },
+              ticks: { color: '#8b949e', stepSize: 1, callback: (v) => 'P' + v },
+              grid: { color: '#21262d' },
+            }
+          }
+        }
+      });
+    }
+
+    document.querySelector('[data-tab="positions"]')?.addEventListener('click', () => {
+      setTimeout(build, 50);
+    });
+  })();
+
+  // ── Gap-to-leader chart ────────────────────────────────────────────────
+  // Vueltas que cada equipo lleva por detrás del líder, por tiempo de carrera.
+  (function() {
+    const data   = JSON.parse(document.getElementById('gapData').textContent || '{}');
+    const canvas = document.getElementById('gapChart');
+    if (!canvas) return;
+    const PALETTE = ['#1F6FEB','#F6C90E','#2DA44E','#FB6A6B','#A371F7','#16BDCA','#F97316','#E63946','#FBBF24','#34D399','#FF6B9D','#56D4DD'];
+    let chart = null, built = false, maxManga = 1;
+    const fromSel  = document.getElementById('gapFrom');
+    const toSel    = document.getElementById('gapTo');
+    const resetBtn = document.getElementById('gapReset');
+
+    function fillSelects() {
+      if (!fromSel || !toSel || fromSel.options.length) return;
+      for (let i = 1; i <= maxManga; i++) {
+        fromSel.add(new Option('M' + i, i));
+        toSel.add(new Option('M' + i, i));
+      }
+      fromSel.value = '1';
+      toSel.value   = String(maxManga);
+    }
+
+    // Reescala el eje Y a lo VISIBLE: rango de mangas seleccionado + equipos NO
+    // ocultados con la leyenda. Usa min "duro" para que el eje también ENCOJA
+    // (suggestedMin solo expandía, por eso al quitar equipos no se reajustaba).
+    function rescaleY() {
+      if (!chart) return;
+      const from = parseInt(fromSel?.value, 10) || 1;
+      const to   = parseInt(toSel?.value, 10)   || maxManga;
+      let minGap = 0;
+      chart.data.datasets.forEach((ds, i) => {
+        if (chart.getDatasetMeta(i).hidden) return;   // equipo oculto por la leyenda
+        (ds.data || []).forEach(p => { if (p.x >= from && p.x <= to && p.y < minGap) minGap = p.y; });
+      });
+      chart.options.scales.y.min = Math.min(-1, Math.floor(minGap) - 1);
+      chart.update();
+    }
+
+    // Zoom: limita el rango de mangas (eje X) y reescala el eje Y a lo visible.
+    function applyRange() {
+      if (!chart) return;
+      let from = parseInt(fromSel?.value, 10) || 1;
+      let to   = parseInt(toSel?.value, 10)   || maxManga;
+      if (from > to) { const t = from; from = to; to = t; if (fromSel) fromSel.value = String(from); if (toSel) toSel.value = String(to); }
+      chart.options.scales.x.min = from;
+      chart.options.scales.x.max = to;
+      rescaleY();
+    }
+
+    function build() {
+      const entries = Object.entries(data);
+      if (entries.length === 0) return;
+      maxManga = 1; let minGap = 0;
+      entries.forEach(([, e]) => (e.points || []).forEach(p => { if (p.y < minGap) minGap = p.y; if (p.x > maxManga) maxManga = p.x; }));
+      const datasets = entries.map(([key, e], i) => ({
+        label: e.name,
+        data: (e.points || []),   // {x: nº de manga, y: vueltas tras el líder (≤0)}
+        borderColor: e.color || PALETTE[i % PALETTE.length],
+        backgroundColor: (e.color || PALETTE[i % PALETTE.length]) + '22',
+        tension: 0.2, spanGaps: true,
+        pointRadius: 2, pointHoverRadius: 6, borderWidth: 2.5,
+      }));
+      if (chart) chart.destroy();
+      chart = new Chart(canvas, {
+        type: 'line',
+        data: { datasets },
+        options: {
+          responsive: true, maintainAspectRatio: false,
+          interaction: { mode: 'nearest', intersect: false },
+          plugins: {
+            legend: {
+              position: 'right', labels: { color: '#c9d1d9', boxWidth: 14 },
+              // Al ocultar/mostrar un equipo, reescala el eje Y a los visibles.
+              onClick: (e, item, legend) => {
+                const ci = legend.chart;
+                if (ci.getDatasetMeta(item.datasetIndex).hidden) ci.show(item.datasetIndex);
+                else ci.hide(item.datasetIndex);
+                // tras el hide/show (que ya hace su update con animación), reescala
+                setTimeout(rescaleY, 0);
+              }
+            },
+            tooltip: {
+              callbacks: {
+                title: (items) => 'M' + items[0].parsed.x,
+                label: (ctx) => ctx.dataset.label + ': ' + (ctx.parsed.y === 0
+                  ? <%- JSON.stringify(t('common.lider')) %>
+                  : ctx.parsed.y + ' <%= t('common.vueltas') %>'),
+              }
+            }
+          },
+          scales: {
+            x: {
+              type: 'linear',
+              min: 1, max: maxManga,
+              title: { display: true, text: <%- JSON.stringify(t('common.manga')) %>, color: '#8b949e' },
+              ticks: { color: '#8b949e', stepSize: 1, precision: 0, callback: (v) => 'M' + v },
+              grid: { color: '#21262d' },
+            },
+            y: {
+              // Líder en 0 (arriba); el resto NEGATIVO (vueltas perdidas) hacia abajo.
+              // min "duro" para que el eje encoja al quitar equipos/rango.
+              max: 0, min: Math.min(-1, Math.floor(minGap) - 1),
+              title: { display: true, text: <%- JSON.stringify(t('results.vueltas_tras_el_lider')) %>, color: '#8b949e' },
+              // Divisiones del eje Y de 200 en 200.
+              ticks: { color: '#8b949e', precision: 0, stepSize: 200, maxTicksLimit: 30 },
+              grid: { color: '#21262d' },
+            }
+          }
+        }
+      });
+      built = true;
+      fillSelects();
+    }
+
+    fromSel?.addEventListener('change', applyRange);
+    toSel?.addEventListener('change', applyRange);
+    resetBtn?.addEventListener('click', () => {
+      if (fromSel) fromSel.value = '1';
+      if (toSel) toSel.value = String(maxManga);
+      applyRange();
+    });
+
+    document.querySelector('[data-tab="gap"]')?.addEventListener('click', () => {
+      setTimeout(() => { if (!built) build(); else if (chart) chart.resize(); }, 50);
+    });
+  })();
+
+  // ── Gap GRID (rejilla) — filtro entre 2-4 equipos + resaltado de pit-stops ──
+  (function() {
+    const data       = JSON.parse(document.getElementById('gapData').textContent || '{}');
+    const mangaTimes = JSON.parse(document.getElementById('mangaTimes')?.textContent || '{}');
+    const table    = document.getElementById('gapgridTable');
+    const chipsBox = document.getElementById('gapgridEntities');
+    if (!table) return;
+    const LBL_TEAM = <%- JSON.stringify(t('common.equipo')) %>;
+    let prevDay = null;
+    function timeHeader(m) {
+      const iso = mangaTimes[m];
+      if (!iso) return '';
+      const d = new Date(iso);
+      if (isNaN(d)) return '';
+      const hhmm = d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+      const day  = d.toLocaleDateString();
+      const changed = prevDay !== null && day !== prevDay;
+      prevDay = day;
+      return '<br><span class="gapgrid__time' + (changed ? ' gapgrid__time--newday' : '') + '" title="' + esc(d.toLocaleString()) + '">' + hhmm + '</span>';
+    }
+    const entries  = Object.entries(data);   // [key, {name,color,points:[{x,y,pit}]}]
+    let maxM = 0;
+    const byM = {};
+    entries.forEach(([k, e]) => {
+      byM[k] = {};
+      (e.points || []).forEach(p => { byM[k][p.x] = p; if (p.x > maxM) maxM = p.x; });
+    });
+    const selected = new Set();
+
+    function renderChips() {
+      if (!chipsBox) return;
+      chipsBox.innerHTML = entries.map(([k, e]) =>
+        '<span class="prog-entity-chip' + (selected.has(k) ? ' active' : '') + '" data-k="' + k + '">' +
+          '<span class="prog-entity-chip__dot" style="background:' + (e.color || '#8b949e') + '"></span>' + e.name +
+        '</span>').join('');
+    }
+
+    function esc(s) { return String(s).replace(/"/g, '&quot;'); }
+
+    function build() {
+      prevDay = null;
+      const useSel = selected.size >= 2 && selected.size <= 4;
+      const rows = entries.filter(([k]) => !useSel || selected.has(k));
+      // Referencia por manga = el que MÁS vueltas lleva (y más alto) entre los mostrados.
+      const refByM = {};
+      for (let m = 1; m <= maxM; m++) {
+        let mx = -Infinity;
+        rows.forEach(([k]) => { const p = byM[k][m]; if (p && p.y > mx) mx = p.y; });
+        refByM[m] = (mx === -Infinity) ? undefined : mx;
+      }
+      let minGap = 0;
+      rows.forEach(([k]) => { for (let m = 1; m <= maxM; m++) { const p = byM[k][m]; if (p && refByM[m] !== undefined) { const g = p.y - refByM[m]; if (g < minGap) minGap = g; } } });
+
+      let html = '<thead><tr><th class="gapgrid__name">' + LBL_TEAM + '</th>';
+      for (let m = 1; m <= maxM; m++) html += '<th>M' + m + timeHeader(m) + '</th>';
+      html += '</tr></thead><tbody>';
+      rows.forEach(([k, e]) => {
+        html += '<tr><td class="gapgrid__name" title="' + esc(e.name) + '"><span class="gapgrid__dot" style="background:' + (e.color || '#8b949e') + '"></span>' + e.name + '</td>';
+        for (let m = 1; m <= maxM; m++) {
+          const p = byM[k][m], ref = refByM[m];
+          if (!p || ref === undefined) { html += '<td></td>'; continue; }
+          const g = p.y - ref;
+          let style = '';
+          if (g < 0 && minGap < 0) { const a = Math.min(0.55, (g / minGap) * 0.55); style = 'background:rgba(248,81,73,' + a.toFixed(3) + ')'; }
+          else if (g === 0) { style = 'background:rgba(46,160,67,.18)'; }
+          const isPit = p.pit > 0;
+          const cls = isPit ? ' class="gapgrid--pit"' : '';
+          const tip = isPit ? ' title="' + p.pit + ' pit-stop' + (p.pit > 1 ? 's' : '') + '"' : '';
+          html += '<td' + cls + ' style="' + style + '"' + tip + '>' + g + '</td>';
+        }
+        html += '</tr>';
+      });
+      html += '</tbody>';
+      table.innerHTML = html;
+    }
+
+    chipsBox?.addEventListener('click', e => {
+      const chip = e.target.closest('.prog-entity-chip'); if (!chip) return;
+      const k = chip.dataset.k;
+      if (selected.has(k)) selected.delete(k);
+      else { if (selected.size >= 4) return; selected.add(k); }   // máximo 4
+      renderChips(); build();
+    });
+
+    renderChips();
+    build();
+    document.querySelector('[data-tab="gapgrid"]')?.addEventListener('click', () => setTimeout(build, 30));
+  })();
+</script>
+
+    <!-- Lap corrections per manga (oculto en la vista pública) -->
+    <% if (!_publicView && tandas.some(t => t.mangas && t.mangas.length > 0)) { %>
+      <div class="print-hide" style="margin-top:2.5rem">
+        <h2 class="section-title">
+          <%= t('common.correccion_de_vueltas') %>
+        </h2>
+        <p class="form-hint" style="margin-bottom:1rem">
+          <%= t('results.elimina_vueltas_fantasma_transfiere_vueltas') %>
+        </p>
+        <div style="display:flex;flex-direction:column;gap:.5rem">
+          <%# El bucle se llamaba `t`, que es justo el nombre del traductor en las
+              vistas: al pasar los textos a t() la llamada acababa en la variable
+              del bucle. %>
+          <% tandas.forEach(tanda => { %>
+            <% if (tanda.mangas && tanda.mangas.length > 0) { %>
+              <div class="tanda-block" style="padding:.75rem 1rem">
+                <span class="tanda-num"><%= t('common.tanda_2') %> <%= tanda.number %></span>
+                <div style="display:flex;flex-wrap:wrap;gap:.4rem;margin-top:.5rem">
+                  <% tanda.mangas.forEach(m => { %>
+                    <a href="/races/<%= race.id %>/mangas/<%= m.id %>/corrections"
+                       class="btn btn--ghost btn--sm">
+                      <%= t('common.manga') %> <%= m.number %>
+                      <span class="badge badge--<%= m.status %>" style="font-size:.65rem;margin-left:.3rem">
+                        <%= {pending: t('results.pend'), active: t('results.activa'), finished: '✓'}[m.status] %>
+                      </span>
+                    </a>
+                  <% }) %>
+                </div>
+              </div>
+            <% } %>
+          <% }) %>
+        </div>
+      </div>
+    <% } %>
+
+  <% } %>
+
+  </div>
+</div>
+
+<script>
+  // Menú «Exportar»: se cierra al pulsar fuera o al elegir una opción.
+  document.addEventListener('click', (e) => {
+    document.querySelectorAll('.exp-menu[open]').forEach(m => {
+      if (!m.contains(e.target) || e.target.closest('.exp-menu__item')) m.removeAttribute('open');
+    });
+  });
+
+  document.querySelectorAll('.results-tab').forEach(btn => {
+    btn.addEventListener('click', () => {
+      document.querySelectorAll('.results-tab').forEach(b => b.classList.remove('active'));
+      document.querySelectorAll('.results-panel').forEach(p => p.classList.remove('active'));
+      btn.classList.add('active');
+      document.getElementById('tab-' + btn.dataset.tab).classList.add('active');
+    });
+  });
+
+  // ── Barra de scroll horizontal espejo (arriba) sincronizada con la parrilla ──
+  (function () {
+    const top   = document.getElementById('matrixTopScroll');
+    const wrap  = document.getElementById('matrixWrapper');
+    if (!top || !wrap) return;
+    const inner = top.querySelector('.grid-topscroll__inner');
+    const table = wrap.querySelector('.matrix-table');
+
+    // Iguala el ancho del inner al contenido real y oculta la barra si no desborda.
+    function sync() {
+      const w = table ? table.scrollWidth : wrap.scrollWidth;
+      inner.style.width = w + 'px';
+      top.classList.toggle('is-hidden', w <= wrap.clientWidth + 1);
+    }
+
+    // Sincronización bidireccional del scrollLeft con guard anti-bucle.
+    let lock = false;
+    top.addEventListener('scroll', () => {
+      if (lock) { lock = false; return; }
+      lock = true; wrap.scrollLeft = top.scrollLeft;
+    });
+    wrap.addEventListener('scroll', () => {
+      if (lock) { lock = false; return; }
+      lock = true; top.scrollLeft = wrap.scrollLeft;
+    });
+
+    sync();
+    window.addEventListener('resize', sync);
+    // Recalcula tras cargar fuentes/imágenes que puedan cambiar el ancho.
+    window.addEventListener('load', sync);
+  })();
+</script>
+
+<%- include('../partials/footer') %>

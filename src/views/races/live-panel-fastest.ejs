@@ -1,0 +1,239 @@
+<!DOCTYPE html>
+<html lang="<%= lang %>">
+<head>
+  <meta charset="UTF-8">
+<%- include('../partials/i18n-client') %>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>
+    <%= t('live-panel-fastest.vueltas_rapidas') %> — <%= race.name %>
+  </title>
+  <link rel="icon" type="image/svg+xml" href="/img/favicon.svg">
+  <link rel="stylesheet" href="/css/fonts.css">
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      display: flex; flex-direction: column; height: 100vh; overflow: hidden;
+      background: #000000; color: #e6edf3; font-family: 'Inter', system-ui, sans-serif;
+    }
+    .pf-header {
+      display: flex; align-items: center; justify-content: space-between;
+      gap: .4rem .9rem; flex-wrap: wrap;
+      padding: .4rem .7rem;
+      background: #000000; border-bottom: 2px solid #161b22; flex-shrink: 0;
+    }
+    .pf-title {
+      font-size: .62rem; font-weight: 700; letter-spacing: .13em;
+      color: #f6c90e; text-transform: uppercase; white-space: nowrap;
+    }
+    .pf-manga {
+      font-family: 'Rajdhani', sans-serif; font-size: .92rem; font-weight: 700;
+      color: #e6edf3; letter-spacing: .04em; white-space: nowrap;
+    }
+    .pf-race {
+      font-size: .68rem; color: #6e7681;
+      overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+    }
+
+    /* Las píldoras fluyen en varias líneas (en el directo van en una fila con
+       paginación). Así la ventana se puede estrechar hasta una sola columna sin
+       que nada desborde: es todo el sentido de este panel suelto. */
+    .pf-wrap {
+      flex: 1; overflow-y: auto;
+      padding: .5rem;
+      display: flex; flex-wrap: wrap; align-content: flex-start;
+      gap: .4rem;
+    }
+
+    /* Mismo lenguaje visual que `.bl-pill` de live.css. Aquí el tamaño se ata al
+       ancho de la ventana (vw), no al alto: el panel se usa estrecho y alto. */
+    .bl-pill {
+      flex: 0 0 auto;
+      display: inline-flex; align-items: center;
+      gap: .45rem;
+      padding: .3rem .65rem;
+      background: #0a0a0a;
+      border: 1px solid #21262d;
+      border-radius: 999px;
+      font-size: clamp(.78rem, 2.4vw, 1.15rem);
+      max-width: 100%;
+    }
+    .bl-pill__lane {
+      flex: 0 0 auto;
+      display: inline-flex; align-items: center; justify-content: center;
+      width: 1.7em; height: 1.7em; border-radius: 50%;
+      font-family: 'Rajdhani', sans-serif;
+      font-weight: 800; color: #fff;
+      font-size: .85em;
+    }
+    .bl-pill__name {
+      font-weight: 600; color: #e6edf3;
+      max-width: 14ch; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+    }
+    .bl-pill__time {
+      font-family: 'Share Tech Mono', monospace;
+      font-weight: 700; color: #f6c90e;
+    }
+    .bl-pill--gold {
+      border-color: #fbbf24;
+      background: linear-gradient(180deg, rgba(251,191,36,.10), rgba(251,191,36,.02));
+    }
+    .bl-pill--gold .bl-pill__time { color: #ffd700; }
+
+    .pf-empty {
+      flex: 1 1 100%;
+      text-align: center; padding: 2rem;
+      color: #6e7681; font-size: .9rem; font-style: italic;
+    }
+
+    /* Transición al reordenar (ReorderFX) + destello direccional cuando una
+       píldora cambia de puesto respecto al render anterior. */
+    .bl-pill { transition: transform .45s cubic-bezier(.22,.8,.2,1); }
+    .bl-pill.rfx-up   { animation: pf-pill-glow-up .9s ease-out; }
+    .bl-pill.rfx-down { animation: pf-pill-glow-down .9s ease-out; }
+    @keyframes pf-pill-glow-up   { 0% { background: rgba(63,185,80,.28); border-color: #3fb950; } 100% { background: #0a0a0a; } }
+    @keyframes pf-pill-glow-down { 0% { background: rgba(230,57,70,.28); border-color: #e63946; } 100% { background: #0a0a0a; } }
+    @media (prefers-reduced-motion: reduce) {
+      .bl-pill { transition: none; }
+      .bl-pill.rfx-up, .bl-pill.rfx-down { animation: none; }
+    }
+  </style>
+</head>
+<body>
+
+  <header class="pf-header">
+    <div>
+      <div class="pf-title">⚡ <%= t('live-panel-fastest.vueltas_rapidas_por_pista') %></div>
+      <div class="pf-manga">
+        <% if (tanda) { %><%= t('common.tanda_2') %> <%= tanda.number %> · <% } %>
+        <%= t('common.manga') %> #<%= manga.number %>
+      </div>
+    </div>
+    <span class="pf-race"><%= race.name %></span>
+  </header>
+
+  <div class="pf-wrap" id="pfBody"></div>
+
+  <%
+    const LC = laneColorsFor(race);
+    const laneRows = lanes
+      .filter(l => !l.is_rest)
+      .map(l => ({
+        lane:  l.lane,
+        color: LC[l.lane - 1] || '#8b949e',
+        name:  l.team_name || l.driver_name || ('Lane ' + l.lane),
+      }));
+  %>
+
+  <script>
+    const PANEL_DATA = <%- JSON.stringify({
+      raceId:       race.id,
+      mangaId:      manga.id,
+      lanes:        laneRows,
+      raceBestLaps: raceBestLaps || {},
+    }) %>;
+    const LANG = "<%= lang %>";
+  </script>
+  <script src="/socket.io/socket.io.js"></script>
+  <script src="/js/reorder-fx.js"></script>
+  <script>
+    // Idéntica a la de live.js: 2 decimales (centésimas) TRUNCANDO, sin redondear
+    // (12.069s → 12.06). El panel mostraba milésimas redondeadas, así que la misma
+    // vuelta salía aquí como 8.09 y en el directo como 8.08.
+    function formatMs(ms) {
+      if (ms == null) return '—';
+      const cs = Math.floor(ms / 10);            // centésimas totales (truncadas)
+      const totalSec   = Math.floor(cs / 100);
+      const hundredths = cs % 100;
+      const secs = totalSec % 60;
+      const mins = Math.floor(totalSec / 60);
+      return `${mins > 0 ? mins + ':' : ''}${String(secs).padStart(mins > 0 ? 2 : 1, '0')}.${String(hundredths).padStart(2, '0')}`;
+    }
+
+    // Color determinista por categoría (mismo string → mismo color, sin
+    // coordinación entre ventanas). Paleta FIJA (no hue continuo): dos
+    // categorías de la MISMA carrera necesitan verse claramente distintas, y
+    // un hash sobre un círculo de tonos continuo puede acercarlas por
+    // casualidad (visto con "C1"/"C2").
+    const CAT_PALETTE = ['#58a6ff','#f6c90e','#3fb950','#ff6b9d','#ff9800','#ba68c8','#00bcd4','#e63946','#8bc34a','#ce93d8','#4dd0e1','#ffab40'];
+    function catColor(cat) {
+      if (!cat) return null;
+      let h = 0;
+      for (let i = 0; i < cat.length; i++) h = (h * 31 + cat.charCodeAt(i)) >>> 0;
+      return CAT_PALETTE[h % CAT_PALETTE.length];
+    }
+    function teamHtml(name, cat) {
+      return cat ? `${name}<span class="cat-suffix" style="color:${catColor(cat)}"> - ${cat}</span>` : name;
+    }
+    function teamPlain(name, cat) { return cat ? `${name} - ${cat}` : name; }
+
+    const pfBody  = document.getElementById('pfBody');
+    let _raceBestLaps = { ...(PANEL_DATA.raceBestLaps || {}) };
+
+    function render() {
+      const rows = PANEL_DATA.lanes
+        .map(l => ({
+          ...l,
+          bestLapMs:  _raceBestLaps[l.lane]?.bestLapMs  ?? null,
+          entityName: _raceBestLaps[l.lane]?.entityName ?? null,
+          categoria:  _raceBestLaps[l.lane]?.categoria  ?? null,
+        }))
+        .filter(r => r.bestLapMs != null)
+        .sort((a, b) => a.bestLapMs - b.bestLapMs);
+
+      if (rows.length === 0) {
+        pfBody.innerHTML = `<div class="pf-empty">${I18N.t('client.live-panel-fastest.sin_vueltas_registradas_todavia')}</div>`;
+        return;
+      }
+
+      // Mismo marcado que el ticker del directo (`.bl-pill` en live.js): así los
+      // dos sitios se ven igual y un retoque de estilo no se queda a medias.
+      // Píldoras persistentes (por carril) reordenadas con ReorderFX: cuando
+      // alguien mejora su vuelta y adelanta a otro, la píldora se desliza en
+      // vez de que la lista salte entera a su forma nueva.
+      const build = window.ReorderFX ? window.ReorderFX.reconcileAnimated : (c, items, keyFn, renderFn) => {
+        c.innerHTML = '';
+        items.forEach(item => c.appendChild(renderFn(item, null)));
+      };
+      build(pfBody, rows, r => r.lane, (r, el) => {
+        const i = rows.indexOf(r);
+        const nombre = r.entityName || r.name;
+        const nombrePlain = teamPlain(nombre, r.categoria);
+        if (!el) { el = document.createElement('div'); }
+        el.className = `bl-pill${i === 0 ? ' bl-pill--gold' : ''}`;
+        el.innerHTML = `
+          <span class="bl-pill__lane" style="background:${r.color}">${r.lane}</span>
+          <span class="bl-pill__name" title="${nombrePlain}">${teamHtml(nombre, r.categoria)}</span>
+          <span class="bl-pill__time">${formatMs(r.bestLapMs)}</span>`;
+        return el;
+      });
+    }
+
+    render();
+
+    // Socket: actualiza raceBestLaps cuando llegan nuevas vueltas
+    const socket = io({ transports: ['websocket', 'polling'] });
+    socket.on('connect', () => {
+      socket.emit('race:live:join');
+      socket.emit('standings:request');
+    });
+
+    socket.on('standings', (data) => {
+      if (data && data.mangaId !== PANEL_DATA.mangaId) return;
+      if (!data?.raceBestLaps) return;
+      let changed = false;
+      Object.entries(data.raceBestLaps).forEach(([lane, info]) => {
+        if (!info || info.bestLapMs == null) return;
+        const prev = _raceBestLaps[lane];
+        if (!prev || prev.bestLapMs !== info.bestLapMs || prev.entityName !== info.entityName) {
+          _raceBestLaps[lane] = info;
+          changed = true;
+        }
+      });
+      if (changed) render();
+    });
+
+    // Cuando se cierra/cambia manga, mantenemos la última vista
+    socket.on('manga:stopped', () => {});
+  </script>
+</body>
+</html>

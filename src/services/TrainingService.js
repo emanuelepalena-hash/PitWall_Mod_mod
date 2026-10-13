@@ -1,0 +1,350 @@
+/*
+ * PitWall — gestión y cronometraje de carreras de slot
+ * Copyright (C) 2026 Víctor González Gómez <vgonzalezgomez@outlook.es>
+ *
+ * This program is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU Affero General Public License as published by
+ * the Free Software Foundation, either version 3 of the License, or
+ * (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU Affero General Public License for more details.
+ *
+ * You should have received a copy of the GNU Affero General Public License
+ * along with this program.  If not, see <https://www.gnu.org/licenses/>.
+ */
+const SerialService = require('./SerialService');
+const SocketService = require('./SocketService');
+const Settings      = require('../models/Settings');
+const Circuit       = require('../models/Circuit');
+const TimingService = require('./TimingService');
+// Diferido: GoOwnerService lee TimingService/PoleTimingService al decidir.
+const GoOwner = () => require('./GoOwnerService');
+
+const LaneColors = require('./LaneColors');
+const { pushBest } = require('../utils/bestLaps');
+
+function lanesFromSettings() {
+  // 1. Con DS-300 (modo serial) o BART (modo bart), suma los carriles de TODOS
+  //    los circuitos definidos en circuits_serial. Imprescindible para que
+  //    aparezcan todos los carriles (si no, el training prepara solo sim_lanes y
+  //    desaparecen carriles: el 2º DS, o los 8 del Master BART).
+  if (['serial', 'serial_agg', 'bart', 'tictac'].includes(Settings.get('serial_mode', ''))) {
+    try {
+      const cfg = JSON.parse(Settings.get('circuits_serial', '[]'));
+      if (Array.isArray(cfg) && cfg.length > 0) {
+        const total = cfg.reduce((sum, c) => sum + (parseInt(c.lanes, 10) || 0), 0);
+        if (total > 0) return total;
+      }
+    } catch {}
+  }
+  // 2. Circuito único de training (legacy).
+  const circuitId = Settings.get('training_circuit_id', '');
+  if (circuitId) {
+    const c = Circuit.findById(parseInt(circuitId, 10));
+    if (c) return c.lanes_count;
+  }
+  // 3. Fallback simulación.
+  return parseInt(Settings.get('sim_lanes', '6'), 10) || 6;
+}
+
+// Vueltas que se guardan por carril para el gráfico de ritmo del directo de
+// entrenamiento (en orden cronológico). `laps` sigue con las 20 de siempre.
+const PACE_MAX = 120;
+
+class TrainingServiceClass {
+  constructor() {
+    this._standby        = false;
+    this._active         = false;
+    this._pausedCircuits = new Set();   // circuitos en pausa (multi-DS)
+    this._lanes          = [];
+    this._laneData       = new Map();
+    this._handler        = null;
+    this._startedAt        = null;
+    this._durationMs       = null;
+    this._pendingDurationMs = null;
+    this._autoFinishTimer  = null;
+    this._sessionRecords   = new Map(); // lane → bestMs, persists until reset
+    // Fin de tanda: los datos se quedan a la vista hasta el siguiente GO.
+    this._clearOnNextGo    = false;
+
+    // Trama 1 del GO: limpia datos de la sesión anterior y guarda la duración.
+    // La activación (cronómetro) se difiere hasta race_started (trama 3,
+    // t+3134ms) para que la cuenta atrás comience exactamente cuando la
+    // corriente se enciende. Los récords de carril (_sessionRecords) se
+    // PRESERVAN entre GOs — solo se borran con el botón "Reset" manual.
+    // El "auto" de training (engancharse a un GO del DS-300) solo aplica si el
+    // GO no es de la carrera ni de la pole (GoOwnerService, la misma regla que
+    // usa app.js para arrancar la manga). El límite de tanda ya no aparta al
+    // entreno: al acabar una tanda el GO es suyo.
+    SerialService.on('race_go', ({ durationMs }) => {
+      if (this._active) return;
+      if (GoOwner().trainingYields()) return;
+      this._pendingDurationMs = durationMs;
+      this._pausedCircuits.clear();
+      this.prepare(lanesFromSettings());
+      SocketService.emit('training:standby', this.getLanes());
+    });
+
+    SerialService.on('race_started', () => {
+      if (this._active) return;
+      if (GoOwner().trainingYields()) return;
+      this._pausedCircuits.clear();
+      if (this._pendingDurationMs != null) {
+        this._durationMs = this._pendingDurationMs;
+        this._pendingDurationMs = null;
+      }
+      if (!this._standby) this.prepare(lanesFromSettings());
+      this._activate();
+      SocketService.emit('training:go', { durationMs: this._durationMs });
+    });
+
+    // Pausa POR CIRCUITO: cada DS pausa solo sus carriles. Igual que race_go/
+    // race_started, se ignora si hay una manga oficial en marcha (TimingService)
+    // o si training ni siquiera está activo/en standby — si no, cada pausa de
+    // una carrera real generaba también un `training:circuit_state` fantasma.
+    SerialService.on('race_paused',  ({ circuit } = {}) => {
+      if (!this.isReady || TimingService.activeMangaId != null) return;
+      this._setCircuitPaused(circuit || 0, true);
+    });
+    SerialService.on('race_resumed', ({ circuit } = {}) => {
+      if (!this.isReady || TimingService.activeMangaId != null) return;
+      this._setCircuitPaused(circuit || 0, false);
+    });
+    // Forced stop: data stays on screen, cleared on next GO (records survive)
+    SerialService.on('race_stopped',  () => { if (this._active) this._pauseToStandby(); });
+    // Normal end: keep data on screen, cleared on next GO
+    SerialService.on('race_finished', () => { if (this._active) this._resetToStandby(); });
+  }
+
+  get isActive()   { return this._active; }
+  get isStandby()  { return this._standby && !this._active; }
+  get isReady()    { return this._active || this._standby; }
+  get laneCount()  { return this._lanes.length; }
+  get startedAt()  { return this._startedAt; }
+  get durationMs() { return this._durationMs; }
+
+  getSessionRecords() {
+    const out = {};
+    for (const [lane, ms] of this._sessionRecords) out[lane] = ms;
+    return out;
+  }
+
+  // ── Pausa por circuito ──────────────────────────────────────────────────────
+  // Marca/desmarca un circuito como pausado y avisa al cliente para que atenúe
+  // sus carriles. Solo afecta a los cruces de ese circuito; los demás siguen.
+  _setCircuitPaused(ci, paused) {
+    if (paused) this._pausedCircuits.add(ci);
+    else        this._pausedCircuits.delete(ci);
+    SocketService.emit('training:circuit_state', {
+      circuit: ci,
+      status:  paused ? 'paused' : 'running',
+      lanes:   SerialService.lanesOfCircuit(ci),
+    });
+    console.log(`[TrainingService] Circuito ${ci + 1} ${paused ? 'pausado' : 'reanudado'}`);
+  }
+
+  // ── Prepare lanes in standby (no recording) ────────────────────────────────
+  prepare(lanesCount) {
+    if (this._active) this._deactivate();
+    this._standby    = true;
+    this._startedAt  = null;
+    this._durationMs = null;
+    this._lanes      = [];
+    for (let i = 1; i <= lanesCount; i++) this._lanes.push(i);
+    this._laneColors = LaneColors.forTraining();
+    this._clearLaneData();
+    console.log(`[TrainingService] Standby — ${lanesCount} lanes`);
+  }
+
+  _clearLaneData() {
+    this._laneData = new Map();
+    for (const lane of this._lanes) {
+      this._laneData.set(lane, { laps: [], chronoLaps: [], top: [], sum: 0, count: 0, lastMs: null });
+    }
+    this._clearOnNextGo = false;
+  }
+
+  // Activación pública desde standby (GO manual en simulación/BART, donde no
+  // llega el race_started del hardware). durationMs → countdown; null → cuenta
+  // hacia arriba. Emite training:go para que el cliente fije el cronómetro.
+  activate(durationMs = null) {
+    if (!this._standby || this._active) return;
+    if (durationMs != null) this._durationMs = durationMs;
+    this._activate();
+    SocketService.emit('training:go', { durationMs: this._durationMs });
+  }
+
+  // Pausa/reanuda la grabación (botón PAUSE en BART/sim). Reusa _pausedCircuits:
+  // BART es un Master = circuito 0, así que pausar el 0 pausa todos sus carriles.
+  pause()  { if (this._active) this._setCircuitPaused(0, true); }
+  resume() { if (this._active) this._setCircuitPaused(0, false); }
+  get isPaused() { return this._active && this._pausedCircuits.has(0); }
+
+  // STOP: vuelve a standby con los datos a la vista; el siguiente GO empieza de cero.
+  stopToStandby() { if (this._active) this._pauseToStandby(); }
+
+  // ── Activate from standby: start recording laps ───────────────────────────
+  _activate() {
+    if (this._active) return;
+    if (this._clearOnNextGo) this._clearLaneData();
+    this._standby   = false;
+    this._active    = true;
+    this._pausedCircuits.clear();
+    this._startedAt = Date.now();
+
+    this._handler = ({ lane, lapTimeMs, circuit, missed }) => {
+      if (!this._active || lapTimeMs == null) return;
+      if (missed) return;   // vuelta repuesta (estimada): su tiempo es una media, no puede ser un récord
+      if (this._pausedCircuits.has(circuit || 0)) return;   // circuito pausado → ignora su cruce
+      const ld = this._laneData.get(lane);
+      if (!ld) return;
+
+      ld.count++;
+      ld.sum   += lapTimeMs;
+      ld.lastMs = lapTimeMs;
+      ld.laps.push(lapTimeMs);
+      ld.laps.sort((a, b) => a - b);
+      ld.chronoLaps.push(lapTimeMs);
+      if (ld.chronoLaps.length > 20) ld.chronoLaps.shift();
+      const top = pushBest(ld.top = ld.top || [], ld.count, lapTimeMs);
+      (ld.pace = ld.pace || []).push(lapTimeMs);
+      if (ld.pace.length > PACE_MAX) ld.pace.shift();
+
+      // Update session record
+      const prevRecord = this._sessionRecords.get(lane);
+      const newRecord  = !prevRecord || lapTimeMs < prevRecord;
+      if (newRecord) {
+        this._sessionRecords.set(lane, lapTimeMs);
+        SocketService.emit('training:record', { lane, recordMs: lapTimeMs });
+      }
+
+      SocketService.emit('training:lap', {
+        lane,
+        color:    this._colorOf(lane),
+        lapTimeMs,
+        count:  ld.count,
+        avgMs:  Math.round(ld.sum / ld.count),
+        bestMs: ld.laps[0],
+        lastMs: lapTimeMs,
+        laps:   [...ld.chronoLaps].reverse(),
+        top:    [...top],
+        pace:   ld.pace ? [...ld.pace] : [],
+      });
+    };
+
+    SerialService.on('lane_crossing', this._handler);
+    SocketService.emit('training:activated', this.getLanes());
+    console.log(`[TrainingService] Activated — ${this._lanes.length} lanes`);
+    this._scheduleAutoFinish();
+  }
+
+  // Respaldo de fin automático, source-agnóstico. El DS-300 manda su propia
+  // trama de fin (0xa4 → race_finished) y este timer, con margen, pierde esa
+  // carrera casi siempre — pero BART es pasivo (nunca emite race_finished:
+  // "SlotTime lleva su propia lógica de carrera") y sin esto el entreno se
+  // queda "activo" para siempre pasado el contador visual. Mismo patrón que
+  // TimingService._scheduleCircuitAutoFinish.
+  _scheduleAutoFinish() {
+    if (this._autoFinishTimer) { clearTimeout(this._autoFinishTimer); this._autoFinishTimer = null; }
+    if (!this._durationMs) return;
+    const AUTO_FINISH_GRACE_MS = 3000;
+    const elapsed   = this._startedAt ? (Date.now() - this._startedAt) : 0;
+    const remaining = Math.max(0, this._durationMs - elapsed) + AUTO_FINISH_GRACE_MS;
+    this._autoFinishTimer = setTimeout(() => {
+      console.log('[TrainingService] Auto-finalizado (tiempo agotado + margen)');
+      this._resetToStandby();
+    }, remaining);
+  }
+
+  // ── Deactivate: stop recording, keep lane config ──────────────────────────
+  _deactivate() {
+    this._active = false;
+    if (this._autoFinishTimer) { clearTimeout(this._autoFinishTimer); this._autoFinishTimer = null; }
+    if (this._handler) {
+      SerialService.off('lane_crossing', this._handler);
+      this._handler = null;
+    }
+  }
+
+  // ── Forced stop: like the normal end, data stays until the next GO ────────
+  _pauseToStandby() {
+    this._deactivate();
+    this._standby       = true;
+    this._startedAt     = null;
+    this._durationMs    = null;
+    this._clearOnNextGo = true;
+    SocketService.emit('training:standby', this.getLanes());
+    console.log('[TrainingService] Forced stop — data kept until next GO, standby');
+  }
+
+  // ── Normal end: back to standby, data stays until the next GO ─────────────
+  _resetToStandby() {
+    this._deactivate();
+    this._standby       = true;
+    this._startedAt     = null;
+    this._durationMs    = null;
+    this._clearOnNextGo = true;
+    SocketService.emit('training:standby', this.getLanes());
+    console.log('[TrainingService] Session finished — data kept until next GO, standby');
+  }
+
+  // ── Manual reset: clear records + full stop ───────────────────────────────
+  resetSession() {
+    this._sessionRecords.clear();
+    const lanes = this._lanes.length || lanesFromSettings();
+    this._deactivate();
+    this._standby = false;
+    this._startedAt = null;
+    this._durationMs = null;
+    this.prepare(lanes);
+    SocketService.emit('training:records_reset');
+    SocketService.emit('training:standby', this.getLanes());
+    console.log('[TrainingService] Session reset — records cleared');
+  }
+
+  // ── Manual stop (Stop button) ─────────────────────────────────────────────
+  stop() {
+    const lanes = this._lanes.length;
+    this._deactivate();
+    this._standby = false;
+    this._startedAt = null;
+    this._durationMs = null;
+    this.prepare(lanes || lanesFromSettings());
+    SocketService.emit('training:standby', this.getLanes());
+    console.log('[TrainingService] Stopped');
+  }
+
+  // ── Manual full start (legacy / form submit) ──────────────────────────────
+  start(lanesCount) {
+    this.prepare(lanesCount);
+    this._activate();
+  }
+
+  _colorOf(lane) {
+    if (!this._laneColors) this._laneColors = LaneColors.forTraining();
+    return this._laneColors[lane - 1] || '#8b949e';
+  }
+
+  getLanes() {
+    this._laneColors = LaneColors.forTraining();
+    return this._lanes.map(lane => {
+      const ld = this._laneData.get(lane) || { laps: [], chronoLaps: [], top: [], sum: 0, count: 0, lastMs: null };
+      return {
+        lane,
+        color:  this._colorOf(lane),
+        count:  ld.count,
+        avgMs:  ld.count > 0 ? Math.round(ld.sum / ld.count) : null,
+        bestMs: ld.laps.length > 0 ? ld.laps[0] : null,
+        lastMs: ld.lastMs,
+        laps:   [...ld.chronoLaps].reverse(),
+        top:    ld.top ? [...ld.top] : [],
+        pace:   ld.pace ? [...ld.pace] : [],
+      };
+    });
+  }
+}
+
+module.exports = new TrainingServiceClass();

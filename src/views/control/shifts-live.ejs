@@ -1,0 +1,1604 @@
+<%- include('../partials/header', { lang, pageTitle: t('common.control_de_pilotos') }) %>
+
+<%
+// fmtHms / shiftCompliance vienen de app.locals (fuente única). El m:ss de antes
+// pintaba 4 h de acumulado como "240:00".
+function fmtTime(ms) {
+  if (ms == null || isNaN(ms)) return '—';
+  return fmtHms(ms);
+}
+
+// Pre-calcular shifts cerrados por carril (histórico de la manga) — útil
+// como tooltip o lista lateral. Por ahora solo lo dejamos en data atributos.
+const closedByLane = {};
+(history || []).forEach(s => {
+  if (s.ended_at_ms == null) return;
+  if (!closedByLane[s.lane]) closedByLane[s.lane] = [];
+  closedByLane[s.lane].push(s);
+});
+
+// Total acumulado por piloto en la carrera (incluye otras mangas)
+const totalsByName = {};
+(summary || []).forEach(r => { totalsByName[r.profile_name] = r.total_ms; });
+
+const minMs = current && current.race ? (current.race.driver_min_total_ms || 0) : 0;
+const maxMs = current && current.race ? (current.race.driver_max_total_ms || 0) : 0;
+const lockoutMs = current && current.race ? (current.race.driver_change_lockout_ms || 120000) : 120000;
+const maxRuns = current && current.race ? (current.race.driver_max_runs || 0) : 0;
+
+// Mismos colores de carril que el directo (races/live.ejs) → coherencia visual.
+const LC = laneColorsFor(current && current.race);
+
+function esc(s) {
+  return String(s == null ? '' : s)
+    .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+}
+// Roster del equipo: cada piloto con turnos + tiempo total, coloreado por límite
+// (verde ok/bajo mín · ámbar a punto · rojo pasado). driverName = piloto actual.
+function renderRoster(roster, driverName) {
+  if (!roster || !roster.length) return '';
+  const title = t('shifts-live.pilotos_del_equipo_tiempo_y_turnos');
+  let html = '<div class="sc-lane__roster" title="' + title + '">';
+  roster.forEach(p => {
+    // En directo el mínimo NO es infracción (nadie lo cumple en el minuto 1):
+    // solo se marca "le falta". Por eso final: false.
+    const c = shiftCompliance({ totalMs: p.total_ms, runs: p.runs }, { minMs, maxMs, maxRuns, final: false });
+    const rcls   = c.status === 'bad'  ? 'is-over'
+                 : c.status === 'warn' ? 'is-near'
+                 : c.status === 'info' ? 'is-under' : 'is-ok';
+    const isNow  = driverName && p.name === driverName;
+    html += '<div class="sc-lane__rost ' + rcls + (isNow ? ' is-now' : '') + '" title="' + esc(p.name) + '">'
+          + '<span class="sc-lane__rost-name">' + esc(p.name) + '</span>'
+          + '<span class="sc-lane__rost-runs">' + p.runs + (maxRuns > 0 ? '/' + maxRuns : '') + (t('shifts-live.t')) + '</span>'
+          + '<span class="sc-lane__rost-time">' + fmtTime(p.total_ms) + '</span>'
+          + '</div>';
+  });
+  return html + '</div>';
+}
+
+// ── Autoajuste de la tarjeta de carril ────────────────────────────────────
+// La altura era fija (un número mágico) y a un equipo de 5 pilotos se le
+// cortaba el último. Se deriva del roster más largo de ESTA manga: así cabe
+// siempre, sin dejar hueco muerto cuando los equipos son de 3.
+const _rosters = Object.values(rosterByLane || {}).map(r => (r || []).length);
+const maxRoster = _rosters.length ? Math.max(..._rosters) : 0;
+// Estimación de partida (el script del final la corrige midiendo el contenido):
+// 112 = padding 16 + cabecera 18 + nombre 20 + stats 34 + separadores 17 + holgura 7.
+// 13.5 = alto de cada fila del roster (.sc-lane__rost).
+const laneCardH = Math.ceil(112 + maxRoster * 13.5);
+
+// El nombre del piloto en grande: encoge cuando es largo en vez de cortarse.
+// Los nombres del catálogo llegan hasta "KALA JOAN CALAHORRO" (19) o
+// "ANDER GOENAGA IRIONDO" (21).
+function driverSize(name) {
+  const n = (name || '').length;
+  if (n <= 13) return '';               // 17px, el tamaño base
+  if (n <= 17) return ' is-long';       // 15px
+  if (n <= 22) return ' is-xlong';      // 13px
+  return ' is-xxlong';                  // 11.5px + parte por palabras
+}
+
+// Mapas para la corrección manual de tiempo (modal): pilotos y nombre por carril.
+const pilotsByLane   = {};
+const teamNameByLane = {};
+(lanes || []).forEach(l => {
+  pilotsByLane[l.lane]   = ((rosterByLane && rosterByLane[l.lane]) || []).map(p => ({ id: p.driver_id, name: p.name }));
+  teamNameByLane[l.lane] = l.team_name || l.driver_name || ('L' + l.lane);
+});
+%>
+
+<div class="vt-page vt-page--shifts<%= isGuestAccess ? ' sc-guest' : '' %>">
+  <!-- Botón de pantalla completa: solo en el modo panel "todas las tarjetas"
+       (flotante arriba a la derecha, ya que ahí se oculta la cabecera). -->
+  <button type="button" id="scFsBtn" class="sc-fs-btn" title="<%= t('common.pantalla_completa') %>">
+    <svg class="sc-fs-open"  viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M8 3H5a2 2 0 0 0-2 2v3m18 0V5a2 2 0 0 0-2-2h-3M3 16v3a2 2 0 0 0 2 2h3m8 0h3a2 2 0 0 0 2-2v-3"/></svg>
+    <svg class="sc-fs-close" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" hidden><path d="M8 3v3a2 2 0 0 1-2 2H3m18 0h-3a2 2 0 0 1-2-2V3M3 16h3a2 2 0 0 1 2 2v3m8 0v-3a2 2 0 0 1 2-2h3"/></svg>
+  </button>
+  <div class="vt-wrap">
+
+    <a href="/" class="vt-back-link">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M19 12H5M12 19l-7-7 7-7"/></svg>
+      <%= t('common.inicio') %>
+    </a>
+
+    <div class="vt-head">
+      <div class="vt-head__title">
+        <h1><%= t('common.control_de_pilotos') %></h1>
+        <% if (current) { %>
+          <span class="vt-cnt"><%= current.race.name %> · M<%= current.manga.number %></span>
+        <% } %>
+
+        <!-- Reglas de la carrera. Van en la cabecera, no en el panel de pre-arme:
+             ese desaparece con el GO y es en carrera cuando el staff necesita
+             responder al piloto que pregunta cuánto puede rodar. 0 = sin límite. -->
+        <% if (current) { %>
+          <% const lockMs = current.race.driver_change_lockout_ms || 0; %>
+          <% if (minMs > 0 || maxMs > 0 || maxRuns > 0 || lockMs > 0) { %>
+            <div class="sc-rules" aria-label="<%= t('shifts-live.reglas_de_turnos_de_esta_carrera') %>">
+              <% if (minMs > 0) { %>
+                <span class="sc-rule is-min">
+                  <span class="sc-rule__l"><%= t('shifts-live.minimo_piloto') %></span>
+                  <span class="sc-rule__v"><%= fmtHms(minMs) %></span>
+                </span>
+              <% } %>
+              <% if (maxMs > 0) { %>
+                <span class="sc-rule is-max">
+                  <span class="sc-rule__l"><%= t('shifts-live.maximo_piloto') %></span>
+                  <span class="sc-rule__v"><%= fmtHms(maxMs) %></span>
+                </span>
+              <% } %>
+              <% if (maxRuns > 0) { %>
+                <span class="sc-rule">
+                  <span class="sc-rule__l"><%= t('shifts-live.turnos_max') %></span>
+                  <span class="sc-rule__v"><%= maxRuns %></span>
+                </span>
+              <% } %>
+              <% if (lockMs > 0) { %>
+                <span class="sc-rule" title="<%= t('shifts-live.no_se_admiten_cambios_de_piloto_en_los_minutos') %>">
+                  <span class="sc-rule__l"><%= t('shifts-live.sin_cambios_al_final') %></span>
+                  <span class="sc-rule__v"><%= fmtHms(lockMs) %></span>
+                </span>
+              <% } %>
+            </div>
+          <% } %>
+        <% } %>
+      </div>
+      <div class="vt-head__actions">
+        <% if (current) { %>
+          <% const statusBadge = current.liveStatus === 'running' ? 'is-ok is-live' : current.liveStatus === 'paused' ? 'is-warn' : current.liveStatus === 'standby' ? 'is-warn' : 'is-neutral'; %>
+          <% const statusLabel = {
+            running: t('shifts-live.en_marcha'),
+            paused:  t('shifts-live.pausada'),
+            standby: t('shifts-live.standby_pre_arme'),
+            unknown: t('shifts-live.activa'),
+          }[current.liveStatus]; %>
+          <span class="vt-badge <%= statusBadge %>"><span class="vt-badge__d"></span><%= statusLabel %></span>
+        <% } else { %>
+          <span class="vt-badge is-neutral"><span class="vt-badge__d"></span><%= t('shifts-live.sin_manga_activa') %></span>
+        <% } %>
+        <% if (current) { %>
+          <button type="button" id="scAllCardsBtn" class="vt-btn vt-btn--ghost vt-btn--sm"
+            title="<%= t('shifts-live.ver_todas_las_tarjetas_de_una_vez_sin_pase_de') %>">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="7" rx="1.2"/><rect x="14" y="3" width="7" height="7" rx="1.2"/><rect x="3" y="14" width="7" height="7" rx="1.2"/><rect x="14" y="14" width="7" height="7" rx="1.2"/></svg>
+            <%= t('shifts-live.todas_las_tarjetas') %>
+          </button>
+        <% } %>
+        <% if (!isGuestAccess) { %>
+        <a href="<%= current ? '/races/' + current.race.id + '/shifts' : '#' %>" class="vt-btn vt-btn--ghost vt-btn--sm" <%= current ? '' : 'aria-disabled="true" style="opacity:.4;pointer-events:none"' %>>
+          <svg viewBox="0 0 24 24"><path d="M3 12h18M3 6h18M3 18h18"/></svg>
+          <%= t('shifts-live.historico') %>
+        </a>
+        <% } %>
+      </div>
+    </div>
+
+    <% if (!current) { %>
+      <div class="vt-empty" style="margin-top:32px">
+        <div class="vt-empty__t"><%= t('shifts-live.esperando_carrera') %></div>
+        <p style="color:var(--vt-mute);margin:6px 0 0">
+          <%= t('shifts-live.esta_vista_se_activa_cuando_hay_una_carrera_de') %>
+        </p>
+      </div>
+    <% } else { %>
+
+      <div class="sc-kiosk" id="scKiosk">
+        <!-- ── Columna izquierda: barra de scan + cuadro de cámara ───── -->
+        <aside class="sc-left">
+
+          <!-- Barra de scan (info + botón Cámara) ENCIMA del cuadro -->
+          <div class="sc-scan-bar" id="scScanBar">
+            <span class="sc-scan-led" id="scLed"></span>
+            <span class="sc-scan-msg" id="scMsg"><%= t('client.shifts-live.listo_para_escanear') %></span>
+            <button type="button" class="sc-cam-btn" id="scCamBtn">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"/><circle cx="12" cy="13" r="4"/></svg>
+              <%= t('shifts-live.camara') %>
+            </button>
+            <span class="sc-remaining" id="scRemaining"></span>
+          </div>
+
+          <!-- Cuadro de cámara (modo quiosco) -->
+          <aside class="sc-cam-dock" id="scCamDock" hidden>
+            <div class="sc-cam-head">
+              <span class="sc-cam-status" id="scCamStatus"><%= t('shifts-live.iniciando_camara') %></span>
+              <div class="sc-cam-acts">
+                <button type="button" class="vt-btn vt-btn--ghost vt-btn--sm" id="scCamSwitch" style="display:none"><%= t('shifts-live.cambiar') %></button>
+              </div>
+            </div>
+            <div class="sc-cam-view">
+              <video id="scCamVideo" playsinline muted></video>
+              <div class="sc-cam-reticle" id="scCamReticle"></div>
+            </div>
+            <div class="sc-cam-hint" id="scCamHint"><%= t('shifts-live.apunta_la_camara_al_qr_del_piloto') %></div>
+          </aside>
+
+        </aside><!-- /.sc-left -->
+
+        <div class="sc-kiosk__main">
+
+      <!-- Input invisible que captura el lector USB-QR -->
+      <input id="scScanInput" type="text" autocomplete="off" spellcheck="false"
+             aria-label="<%= t('shifts-live.lector_qr') %>"
+             class="sc-scan-input">
+
+      <!-- ── Pre-arme: quién falta por fichar ─────────────────────────────
+           Se mantiene también con la manga EN MARCHA (y en pausa): sirve para
+           ver de un vistazo qué carril no ha fichado todavía. Una casilla por
+           carril, agrupadas por caja: la cuadrícula de abajo va paginada y rota
+           sola, así que el carril que falta puede estar en otra página; aquí se
+           ven los 24 de golpe. -->
+      <% if (['standby','running','paused'].includes(current.liveStatus) && prearme && prearme.total > 0) { %>
+        <section class="sc-prearm <%= prearme.complete ? 'is-complete' : '' %>" id="scPrearm"
+                 aria-label="<%= t('shifts-live.estado_del_fichaje_de_pilotos') %>">
+          <div class="sc-prearm__head">
+            <span class="sc-prearm__t"><%= t('shifts-live.pre_arme') %></span>
+            <span class="sc-prearm__n">
+              <%= prearme.scanned %>/<%= prearme.total %> <%= t('shifts-live.fichados') %>
+            </span>
+          </div>
+
+          <% prearme.boxes.forEach(box => { %>
+            <div class="sc-prearm__row">
+              <span class="sc-prearm__box"><%= t('client.common.circuito') %> <%= box.number %></span>
+              <span class="sc-prearm__cells">
+                <% box.cells.forEach(c => { %>
+                  <span class="sc-prearm__cell <%= !c.active ? 'is-off' : (c.scanned ? 'is-ok' : 'is-missing') %>"
+                        <% if (c.active) { %>title="<%= (t('common.carril')) + c.lane %> · <%= c.teamName %> — <%= c.scanned ? (t('shifts-live.fichado')) : (t('shifts-live.sin_fichar')) %>"<% } %>><%= c.lane %></span>
+                <% }) %>
+              </span>
+              <% const faltanCircuito = box.cells.filter(c => c.active && !c.scanned); %>
+              <% if (faltanCircuito.length) { %>
+                <span class="sc-prearm__miss">
+                  <% faltanCircuito.forEach(c => { %><span class="sc-prearm__chip"><b>L<%= c.lane %></b><%= c.teamName %></span><% }) %>
+                </span>
+              <% } else { %>
+                <span class="sc-prearm__miss is-ok">✓ <%= t('shifts-live.completo') %></span>
+              <% } %>
+            </div>
+          <% }) %>
+
+          <div class="sc-prearm__foot">
+            <% if (prearme.complete) { %>
+              <span class="sc-prearm__done">
+                <%= t('shifts-live.todos_fichados', { n: prearme.total }) %>
+              </span>
+            <% } else { %>
+              <span class="sc-prearm__legend">
+                <span><i class="sc-prearm__dot is-ok"></i><%= t('shifts-live.fichado') %></span>
+                <span><i class="sc-prearm__dot is-missing"></i><%= t('common.pendiente_2') %></span>
+              </span>
+            <% } %>
+          </div>
+        </section>
+      <% } %>
+
+      <!-- ── Cards por carril (paginado si no caben) ─────────────────── -->
+      <div class="sc-lane-head">
+        <span class="vt-sec-lbl"><%= t('common.carriles') %></span>
+        <div class="sc-legend">
+          <span class="sc-legend__i"><span class="sc-legend__dot" style="background:#c792ea"></span><%= t('common.bajo_min') %></span>
+          <span class="sc-legend__i"><span class="sc-legend__dot" style="background:var(--vt-green)"></span>OK</span>
+          <span class="sc-legend__i"><span class="sc-legend__dot" style="background:var(--vt-amber)"></span><%= t('shifts-live.a_punto') %></span>
+          <span class="sc-legend__i"><span class="sc-legend__dot" style="background:var(--vt-red)"></span><%= t('shifts-live.pasado') %></span>
+        </div>
+        <span class="sc-pages-ind" id="scLaneInd"></span>
+      </div>
+      <div class="sc-lane-area" id="scLaneArea">
+      <div class="sc-lane-grid" id="scLaneGrid" style="--sc-lane-h: <%= laneCardH %>px">
+        <% lanes.forEach(l => {
+          const s = openByLane[l.lane];
+          const live = liveActive[l.lane] || {};
+          const drivingMs = live.drivingMs ?? (s ? (s.driving_ms || 0) : 0);
+          const driverName = s ? s.driver_name : null;
+          const totalMs = driverName ? (totalsByName[driverName] || 0) : 0;
+          const closed = closedByLane[l.lane] || [];
+        %>
+          <div class="sc-lane" data-lane="<%= l.lane %>">
+            <div class="sc-lane__head">
+              <div class="sc-lane__num" style="background:<%= LC[l.lane - 1] || '#8b949e' %>;color:<%= laneInk(LC[l.lane - 1]) %>;border-color:transparent">L<%= l.lane %></div>
+              <div class="sc-lane__team" title="<%= l.team_name || l.driver_name || '' %>"><%= l.team_name || l.driver_name || '—' %></div>
+              <button type="button" class="sc-lane__fix" data-lane="<%= l.lane %>" title="<%= t('shifts-live.corregir_tiempo_olvido_fichar') %>">✎</button>
+            </div>
+            <div class="sc-lane__driver<%= driverSize(driverName) %>" data-driver-name title="<%= driverName || '' %>">
+              <% if (driverName) { %>
+                <%= driverName %>
+              <% } else { %>
+                <span class="sc-lane__empty"><%= t('common.sin_asignar') %></span>
+              <% } %>
+            </div>
+            <div class="sc-lane__stats">
+              <div>
+                <span class="sc-lane__lbl"><%= t('shifts-live.turno') %></span>
+                <span class="sc-lane__val" data-shift-ms="<%= drivingMs %>"><%= fmtTime(drivingMs) %></span>
+              </div>
+              <div>
+                <span class="sc-lane__lbl"><%= t('shifts-live.total_piloto') %></span>
+                <span class="sc-lane__val" data-total-ms="<%= totalMs %>" data-total-base-ms="<%= Math.max(0, totalMs - (s ? (s.driving_ms || 0) : 0)) %>"><%= fmtTime(totalMs) %></span>
+              </div>
+            </div>
+            <%- renderRoster((rosterByLane && rosterByLane[l.lane]) || [], driverName) %>
+          </div>
+        <% }) %>
+
+        <!-- ── Equipos que descansan esta manga ──────────────────────── -->
+        <% (restingTeams || []).forEach(rt => { %>
+          <div class="sc-lane sc-lane--rest" data-rest="<%= rt.restPos %>">
+            <div class="sc-lane__head">
+              <div class="sc-lane__num sc-lane__num--rest"><%= t('shifts-live.desc') %></div>
+              <div class="sc-lane__team"><%= rt.team_name %></div>
+            </div>
+            <div class="sc-lane__rest-badge">
+              <%= t('client.common.descanso') %> <%= rt.restPos %>/<%= rt.restTotal %>
+            </div>
+            <%- renderRoster(rt.roster, null) %>
+          </div>
+        <% }) %>
+      </div>
+
+      <!-- Autoajuste del alto de tarjeta. La vista ya calcula una estimación
+           (--sc-lane-h), pero depende de la fuente, del idioma y del tamaño del
+           roster: a un equipo de 6 pilotos se le cortaba el último. Aquí se mide
+           el contenido REAL de la tarjeta más alta y se aplica a todas, antes de
+           que el paginador mida nada. Se ejecuta en un bloque aparte para que un
+           fallo suyo no arrastre al resto de la pantalla. -->
+      <script>
+      (function () {
+        var grid = document.getElementById('scLaneGrid');
+        if (!grid) return;
+        function ajustar() {
+          var cards = grid.querySelectorAll('.sc-lane');
+          if (!cards.length) return;
+          var i, alto = 0;
+          for (i = 0; i < cards.length; i++) cards[i].style.height = 'auto';
+          for (i = 0; i < cards.length; i++) alto = Math.max(alto, cards[i].getBoundingClientRect().height);
+          for (i = 0; i < cards.length; i++) cards[i].style.height = '';
+          if (alto > 0) grid.style.setProperty('--sc-lane-h', Math.ceil(alto) + 'px');
+        }
+        ajustar();
+        // Las tipografías del quiosco llegan por webfont: al cargar, el texto
+        // crece y el alto medido antes se queda corto.
+        if (document.fonts && document.fonts.ready) document.fonts.ready.then(ajustar);
+        addEventListener('resize', ajustar);
+      })();
+      </script>
+      </div><!-- /.sc-lane-area -->
+
+        </div><!-- /.sc-kiosk__main -->
+
+      <!-- ── Pilotos por tiempo (panel lateral derecho, paginado) ─────── -->
+      <aside class="sc-pilots-panel" id="scPilotsPanel">
+        <div class="sc-pilots-panel__head">
+          <span class="vt-sec-lbl"><%= t('shifts-live.pilotos_por_tiempo') %></span>
+          <span class="sc-pages-ind" id="scPilotsInd"></span>
+        </div>
+        <% if (summary.length === 0) { %>
+          <p style="color:var(--vt-mute)"><%= t('common.aun_no_hay_turnos_registrados') %></p>
+        <% } else { %>
+          <div class="sc-summary" id="scPilotsPages">
+            <% summary.forEach(r => {
+              const t    = r.total_ms;
+              const runs = r.runs_count || 0;
+              const c = shiftCompliance({ totalMs: t, runs }, { minMs, maxMs, maxRuns, final: false });
+              const badge   = shiftBadge(c.status);
+              const runsCls = c.overRuns ? 'is-over' : (c.nearRuns ? 'is-near' : '');
+              const pct = maxMs > 0 ? Math.min(100, Math.round(t / maxMs * 100)) : 0;
+              const minPct = maxMs > 0 && minMs > 0 ? Math.min(100, Math.round(minMs / maxMs * 100)) : 0;
+            %>
+              <div class="sc-pilot-row" data-profile-name="<%= r.profile_name %>">
+                <%# Sin el punto de categoría: en esta pantalla se confunde con
+                    los colores de estado (ámbar «a punto», rojo «pasado»). La
+                    categoría sigue en el histórico y en el informe. %>
+                <div class="sc-pilot-row__name" title="<%= r.profile_category || '' %>">
+                  <%= r.profile_name %>
+                </div>
+                <% if (maxMs > 0 || minMs > 0) { %>
+                  <div class="sc-pilot-row__bar">
+                    <div class="sc-pilot-row__bar-fill <%= badge %>" style="width:<%= pct %>%"></div>
+                    <% if (minPct > 0) { %>
+                      <div class="sc-pilot-row__bar-min" style="left:<%= minPct %>%" title="<%= t('shifts-live.minimo') %>"></div>
+                    <% } %>
+                  </div>
+                <% } %>
+                <div class="sc-pilot-row__runs <%= runsCls %>" title="<%= t('shifts-live.veces_que_ha_corrido_turnos') %><%= maxRuns > 0 ? (t('shifts-live.max')) + maxRuns : '' %>">
+                  <span class="sc-pilot-row__runs-n"><%= runs %><% if (maxRuns > 0) { %><span class="sc-pilot-row__runs-max">/<%= maxRuns %></span><% } %></span>
+                  <span class="sc-pilot-row__runs-l"><%= c.overRuns ? (t('shifts-live.pasado_2')) : (t('shifts-live.turnos')) %></span>
+                </div>
+                <div class="sc-pilot-row__total" data-total-ms="<%= t %>">
+                  <%= fmtTime(t) %>
+                  <% if (maxMs > 0) { %><span style="color:var(--vt-mute)"> / <%= fmtTime(maxMs) %></span><% } %>
+                </div>
+                <div class="sc-pilot-row__status">
+                  <% if (c.overMax) { %>
+                    <span class="vt-badge <%= badge %>"><span class="vt-badge__d"></span><%= t('common.pasado') %></span>
+                  <% } else if (c.overRuns) { %>
+                    <span class="vt-badge <%= badge %>"><span class="vt-badge__d"></span><%= t('common.turnos') %></span>
+                  <% } else if (c.nearMax) { %>
+                    <span class="vt-badge <%= badge %>"><span class="vt-badge__d"></span>90%+</span>
+                  <% } else if (c.nearRuns) { %>
+                    <span class="vt-badge <%= badge %>"><span class="vt-badge__d"></span><%= t('common.ultimo_turno') %></span>
+                  <% } else if (c.status === 'info') { %>
+                    <span class="vt-badge <%= badge %>"><span class="vt-badge__d"></span><%= t('common.bajo_min') %></span>
+                  <% } else { %>
+                    <span class="vt-badge is-ok"><span class="vt-badge__d"></span>OK</span>
+                  <% } %>
+                </div>
+              </div>
+            <% }) %>
+          </div>
+        <% } %>
+      </aside><!-- /.sc-pilots-panel -->
+
+      </div><!-- /.sc-kiosk -->
+
+      <!-- ── Toast contenedor ───────────────────────────────────────── -->
+      <div class="sc-toast-wrap" id="scToasts" aria-live="polite"></div>
+
+      <!-- ── Feedback grande para el piloto (✓/✗ + nombre + carril) ──── -->
+      <div class="sc-feedback" id="scFeedback" hidden aria-live="assertive">
+        <div class="sc-feedback__box">
+          <div class="sc-feedback__icon" id="scFbIcon"></div>
+          <div class="sc-feedback__title" id="scFbTitle"></div>
+          <div class="sc-feedback__sub" id="scFbSub"></div>
+        </div>
+      </div>
+
+      <!-- ── Modal corregir tiempo (equipo que olvidó fichar) ────────── -->
+      <div class="sc-fix-modal" id="scFixModal" hidden>
+        <div class="sc-fix-box">
+          <div class="sc-fix-head">
+            <span id="scFixTitle"><%= t('shifts-live.corregir_tiempo') %></span>
+            <button type="button" class="vt-btn vt-btn--ghost vt-btn--sm" id="scFixClose">✕</button>
+          </div>
+          <p class="sc-fix-hint"><%= t('shifts-live.anade_tiempo_a_un_piloto_que_corrio_pero_no_se') %></p>
+          <label class="sc-fix-lbl"><%= t('client.common.piloto') %></label>
+          <select id="scFixPilot" class="sc-fix-select"></select>
+          <label class="sc-fix-lbl"><%= t('shifts-live.tiempo_a_anadir_min_seg') %></label>
+          <input id="scFixTime" class="sc-fix-input" type="text" inputmode="numeric" placeholder="10:00" autocomplete="off">
+          <div class="sc-fix-actions">
+            <button type="button" class="vt-btn vt-btn--ghost" id="scFixCancel"><%= t('client.common.cancelar') %></button>
+            <button type="button" class="vt-btn" id="scFixSubmit"><%= t('shifts-live.anadir_tiempo') %></button>
+          </div>
+        </div>
+      </div>
+
+    <% } %>
+
+  </div>
+</div>
+
+<% if (current) { %>
+<script src="/socket.io/socket.io.js"></script>
+<script src="/js/jsQR.js"></script>
+<script>
+const RACE_ID  = <%= current.race.id %>;
+const MANGA_ID = <%= current.manga.id %>;
+const LOCKOUT_MS = <%= lockoutMs %>;
+const MIN_MS = <%= minMs %>;
+const MAX_MS = <%= maxMs %>;
+const LANG = "<%= lang %>";
+const HTTPS_INFO = <%- JSON.stringify(typeof https !== 'undefined' ? https : { enabled: false, port: 3443 }) %>;
+const MANGA_DURATION_MS = <%= mangaDurationMs || 0 %>;
+const TEAM_PILOTS = <%- JSON.stringify(pilotsByLane) %>;
+const TEAM_NAMES  = <%- JSON.stringify(teamNameByLane) %>;
+
+// Gemelo en cliente de src/utils/duration.js#fmtHms (el navegador no puede
+// hacer require). Con m:ss, un acumulado de 4 h se pintaba "240:00".
+function fmtTime(ms) {
+  if (ms == null || isNaN(ms)) return '—';
+  const total = Math.max(0, Math.floor(ms / 1000));
+  const h = Math.floor(total / 3600);
+  const m = Math.floor((total % 3600) / 60);
+  const s = total % 60;
+  const dd = n => String(n).padStart(2, '0');
+  return h > 0 ? h + ':' + dd(m) + ':' + dd(s) : m + ':' + dd(s);
+}
+
+// ── Input siempre enfocado ────────────────────────────────────────
+const input = document.getElementById('scScanInput');
+const led   = document.getElementById('scLed');
+const msg   = document.getElementById('scMsg');
+const scanBar = document.getElementById('scScanBar');
+
+function refocus() { if (input) input.focus(); }
+function setLed(state, text) {
+  scanBar.dataset.state = state;
+  msg.textContent = text;
+}
+function updateFocus() {
+  if (document.activeElement === input) {
+    setLed('ready', I18N.t('client.shifts-live.listo_para_escanear'));
+  } else {
+    setLed('warn', I18N.t('client.shifts-live.pulsa_para_reactivar_el_lector'));
+  }
+}
+input.addEventListener('focus', updateFocus);
+input.addEventListener('blur', () => setTimeout(updateFocus, 50));
+document.addEventListener('click', e => {
+  ensureAudio();
+  const t = e.target;
+  // No robar el foco al interactuar con el modal de corrección ni con campos.
+  if (t.closest && t.closest('.sc-fix-modal')) return;
+  if (['A', 'BUTTON', 'INPUT', 'SELECT', 'TEXTAREA', 'OPTION'].includes(t.tagName)) return;
+  refocus();
+});
+window.addEventListener('focus', refocus);
+refocus(); updateFocus();
+
+// ── Feedback grande + sonido para el piloto ──────────────────────
+const fb      = document.getElementById('scFeedback');
+const fbIcon  = document.getElementById('scFbIcon');
+const fbTitle = document.getElementById('scFbTitle');
+const fbSub   = document.getElementById('scFbSub');
+let fbTimer = null, audioCtx = null;
+
+// El navegador exige un gesto del usuario para habilitar audio: lo
+// desbloqueamos en el primer clic / al activar la cámara.
+function ensureAudio() {
+  try {
+    if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+    if (audioCtx.state === 'suspended') audioCtx.resume();
+  } catch (e) {}
+}
+function tone(freq, start, dur, type) {
+  const o = audioCtx.createOscillator(), g = audioCtx.createGain();
+  o.type = type || 'sine'; o.frequency.value = freq;
+  g.gain.setValueAtTime(0.0001, start);
+  g.gain.exponentialRampToValueAtTime(0.3, start + 0.012);
+  g.gain.exponentialRampToValueAtTime(0.0001, start + dur);
+  o.connect(g); g.connect(audioCtx.destination);
+  o.start(start); o.stop(start + dur + 0.02);
+}
+function beep(ok) {
+  if (!audioCtx) return;
+  try {
+    const t = audioCtx.currentTime;
+    if (ok) { tone(880, t, 0.11); tone(1320, t + 0.12, 0.13); }  // dos tonos ascendentes
+    else    { tone(200, t, 0.34, 'square'); }                    // zumbido grave
+  } catch (e) {}
+}
+function bigFeedback(kind, title, sub) {
+  if (!fb) return;
+  fb.className = 'sc-feedback ' + (kind === 'ok' ? 'is-ok' : 'is-error');
+  fbIcon.textContent  = kind === 'ok' ? '✓' : '✕';
+  fbTitle.textContent = title || '';
+  fbSub.textContent   = sub || '';
+  fb.hidden = false;
+  beep(kind === 'ok');
+  clearTimeout(fbTimer);
+  fbTimer = setTimeout(() => {
+    fb.classList.add('is-out');
+    setTimeout(() => { fb.hidden = true; fb.classList.remove('is-out'); }, 300);
+  }, kind === 'ok' ? 7000 : 5000);
+}
+
+// ── Envío de un código (lo comparten el lector USB y la webcam) ───
+async function submitCode(code) {
+  code = (code || '').trim();
+  if (!code) return;
+  setLed('busy', I18N.t('client.shifts-live.procesando'));
+  try {
+    const res = await fetch(`/races/${RACE_ID}/mangas/${MANGA_ID}/checkin`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ qr_code: code }),
+    });
+    const data = await res.json().catch(() => ({}));
+    if (res.ok && data.ok) {
+      const modeLabel = {
+        pre_arm: I18N.t('client.shifts-live.pre_armado'),
+        swap_running: I18N.t('client.shifts-live.cambio_en_marcha'),
+        swap_paused: I18N.t('client.shifts-live.cambio_en_pausa'),
+      }[data.mode] || (I18N.t('client.shifts-live.asignado'));
+      toast('ok', `${modeLabel}: ${data.driverName} → ${I18N.t('client.common.carril')} ${data.lane}`);
+      bigFeedback('ok', data.driverName, `${I18N.t('client.common.carril')} ${data.lane} · ${modeLabel}`);
+      // Marca de que el fichaje salió de ESTA estación: el eco por socket no
+      // debe recargar la página hasta que el check verde termine (ver abajo).
+      window._lastLocalCheckin = Date.now();
+    } else {
+      const errMap = {
+        unknown_qr:                I18N.t('client.shifts-live.qr_desconocido'),
+        team_resting:              I18N.t('client.shifts-live.equipo_descansando_no_puede_fichar'),
+        driver_not_in_manga:       I18N.t('client.shifts-live.el_piloto_no_esta_en_esta_manga'),
+        not_championship_race:     I18N.t('client.shifts-live.no_es_carrera_de_campeonato'),
+        not_team_race:             I18N.t('client.shifts-live.no_es_carrera_por_equipos'),
+        ambiguous_team:            I18N.t('client.shifts-live.ambiguedad_usa_override_manual'),
+        manga_active_but_not_timing: I18N.t('client.shifts-live.manga_activa_pero_sin_sesion_de_timing'),
+        manga_active_but_not_running: I18N.t('client.shifts-live.manga_activa_pero_ni_running_ni_paused'),
+        manga_status_invalid:      I18N.t('client.shifts-live.estado_de_manga_invalido'),
+        change_locked_final_minutes: I18N.t('client.shifts-live.bloqueado_quedan_v_del_final', { v: fmtTime(data.remainingMs) }),
+        missing_params: I18N.t('client.shifts-live.faltan_datos'),
+      };
+      const text = errMap[data.error] || (data.error || 'Error');
+      toast('error', text + (data.name ? ` (${data.name})` : ''));
+      bigFeedback('error', text, data.name || '');
+    }
+  } catch (err) {
+    toast('error', err.message || I18N.t('client.shifts-live.error_red'));
+    bigFeedback('error', I18N.t('client.shifts-live.error_de_red'), '');
+  } finally {
+    updateFocus();
+  }
+}
+
+// ── Submit en Enter (el lector USB termina con Enter) ─────────────
+input.addEventListener('keydown', e => {
+  if (e.key !== 'Enter') return;
+  e.preventDefault();
+  const code = input.value.trim();
+  input.value = '';
+  submitCode(code).finally(refocus);
+});
+
+// ── Corregir tiempo manualmente (equipo que olvidó fichar) ────────
+const fixModal = document.getElementById('scFixModal');
+const fixTitle = document.getElementById('scFixTitle');
+const fixPilot = document.getElementById('scFixPilot');
+const fixTime  = document.getElementById('scFixTime');
+
+function msToClock(ms) {
+  const s = Math.max(0, Math.round(ms / 1000));
+  return Math.floor(s / 60) + ':' + String(s % 60).padStart(2, '0');
+}
+function clockToMs(str) {
+  str = (str || '').trim();
+  if (!str) return NaN;
+  if (str.indexOf(':') >= 0) {
+    const [m, s] = str.split(':');
+    return ((parseInt(m, 10) || 0) * 60 + (parseInt(s, 10) || 0)) * 1000;
+  }
+  const n = parseInt(str, 10);                       // sin ':' → segundos
+  return isNaN(n) ? NaN : n * 1000;
+}
+function openFix(lane) {
+  const pilots = (TEAM_PILOTS && TEAM_PILOTS[lane]) || [];
+  if (!pilots.length) { toast('error', I18N.t('client.shifts-live.sin_pilotos_en_este_carril')); return; }
+  fixTitle.textContent = (I18N.t('client.shifts-live.corregir')) + (TEAM_NAMES[lane] || ('L' + lane));
+  fixPilot.innerHTML = pilots.map(p => `<option value="${p.id}">${p.name}</option>`).join('');
+  fixTime.value = msToClock(MANGA_DURATION_MS || 0);
+  fixModal.hidden = false;
+  setTimeout(() => { fixTime.focus(); fixTime.select(); }, 50);
+}
+function closeFix() { fixModal.hidden = true; refocus(); }
+async function submitFix() {
+  const driverId = parseInt(fixPilot.value, 10);
+  const ms = clockToMs(fixTime.value);
+  if (!driverId || !Number.isFinite(ms) || ms <= 0) { toast('error', I18N.t('client.shifts-live.tiempo_no_valido')); return; }
+  try {
+    const res = await fetch(`/races/${RACE_ID}/mangas/${MANGA_ID}/correct-time`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ driver_id: driverId, ms }),
+    });
+    const data = await res.json().catch(() => ({}));
+    if (res.ok && data.ok) {
+      toast('ok', `${I18N.t('client.shifts-live.tiempo_anadido')}: ${data.driverName} +${msToClock(ms)}`);
+      closeFix();
+      setTimeout(() => location.reload(), 400);
+    } else {
+      toast('error', data.error || 'Error');
+    }
+  } catch (e) { toast('error', e.message || I18N.t('client.shifts-live.error_red')); }
+}
+document.addEventListener('click', e => {
+  const btn = e.target.closest && e.target.closest('.sc-lane__fix');
+  if (btn) { e.preventDefault(); openFix(parseInt(btn.dataset.lane, 10)); }
+});
+document.getElementById('scFixClose').addEventListener('click', closeFix);
+document.getElementById('scFixCancel').addEventListener('click', closeFix);
+document.getElementById('scFixSubmit').addEventListener('click', submitFix);
+fixTime.addEventListener('keydown', e => { if (e.key === 'Enter') { e.preventDefault(); submitFix(); } });
+fixModal.addEventListener('click', e => { if (e.target === fixModal) closeFix(); });
+document.addEventListener('keydown', e => { if (e.key === 'Escape' && !fixModal.hidden) closeFix(); });
+
+// ── Lector por webcam (jsQR) — modo quiosco embebido ──────────────
+// La cámara se queda fija en un dock al lado del panel, escaneando en
+// continuo, para que los pilotos se fichen de forma autónoma. Su estado
+// (on/off) se recuerda en localStorage y se auto-arranca al cargar.
+// Reutiliza el mismo endpoint de check-in; el lector USB-HID sigue activo.
+const camBtn     = document.getElementById('scCamBtn');
+const kioskWrap  = document.getElementById('scKiosk');
+const camDock    = document.getElementById('scCamDock');
+const camVideo   = document.getElementById('scCamVideo');
+const camSwitch  = document.getElementById('scCamSwitch');
+const camStatus  = document.getElementById('scCamStatus');
+const camReticle = document.getElementById('scCamReticle');
+const camHint    = document.getElementById('scCamHint');
+const CAM_PREF   = 'sc_cam_kiosk';
+let camStream = null, camRAF = null, camCanvas = null, camCtx = null;
+let camDevices = [], camDeviceIdx = 0;
+let camLastCode = '', camLastTs = 0;
+let camOn = false;
+
+function camSetStatus(t) { if (camStatus) camStatus.textContent = t; }
+
+// Pide a la cámara enfoque/exposición/balance automáticos y continuos.
+// No todas las webcams lo exponen (muchas son de foco fijo): en ese caso es
+// un no-op silencioso y avisamos para que acerquen el QR ~15-20 cm.
+async function camApplyFocus() {
+  try {
+    const track = camStream && camStream.getVideoTracks ? camStream.getVideoTracks()[0] : null;
+    if (!track || !track.getCapabilities) return;
+    const caps = track.getCapabilities();
+    const adv = [];
+    if (caps.focusMode && caps.focusMode.includes('continuous'))               adv.push({ focusMode: 'continuous' });
+    if (caps.exposureMode && caps.exposureMode.includes('continuous'))         adv.push({ exposureMode: 'continuous' });
+    if (caps.whiteBalanceMode && caps.whiteBalanceMode.includes('continuous')) adv.push({ whiteBalanceMode: 'continuous' });
+    if (adv.length) await track.applyConstraints({ advanced: adv });
+    if (camHint) {
+      const hasAF = caps.focusMode && caps.focusMode.includes('continuous');
+      camHint.textContent = hasAF ? I18N.t('client.shifts-live.camara_af') : I18N.t('client.shifts-live.camara_fija');
+    }
+  } catch (e) { /* sin soporte de constraints avanzados: ignoramos */ }
+}
+function camFlash() {
+  if (!camReticle) return;
+  camReticle.classList.add('is-hit');
+  setTimeout(() => camReticle.classList.remove('is-hit'), 350);
+}
+
+async function camStart(deviceId) {
+  if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+    camSetStatus(I18N.t('client.shifts-live.camara_no_disponible_en_este_navegador'));
+    return;
+  }
+  if (!window.isSecureContext) {
+    // Contexto inseguro (abierto por IP sin HTTPS): la cámara está bloqueada por
+    // el navegador. Si el operador activó el HTTPS local, ofrecemos el enlace
+    // seguro al mismo control, en el mismo host y el puerto configurado.
+    if (HTTPS_INFO && HTTPS_INFO.enabled && location.protocol === 'http:') {
+      const secure = 'https://' + location.hostname + ':' + HTTPS_INFO.port + location.pathname + location.search;
+      camSetStatus(I18N.t('client.shifts-live.la_camara_necesita_https'));
+      const hint = document.getElementById('scCamHint');
+      if (hint) {
+        hint.innerHTML = (I18N.t('client.shifts-live.la_camara_solo_funciona_por_https_abre_esta'))
+          + '<a href="' + secure + '" style="color:#58a6ff;font-weight:600">' + secure + '</a>';
+      }
+    } else {
+      camSetStatus(I18N.t('client.shifts-live.la_camara_necesita_https_o_localhost_activalo'));
+    }
+    return;
+  }
+  try {
+    // Pedimos resolución alta: un QR con más píxeles se decodifica mucho mejor.
+    const videoCfg = deviceId
+      ? { deviceId: { exact: deviceId } }
+      : { facingMode: { ideal: 'environment' } };
+    videoCfg.width  = { ideal: 1280 };
+    videoCfg.height = { ideal: 720 };
+    camStream = await navigator.mediaDevices.getUserMedia({ video: videoCfg });
+    camVideo.srcObject = camStream;
+    await camVideo.play();
+    camSetStatus(I18N.t('client.shifts-live.escaneando'));
+    // Autoenfoque continuo (+ exposición/balance auto) si la cámara lo soporta.
+    await camApplyFocus();
+    // Con permiso ya concedido, los labels de las cámaras están disponibles.
+    if (!camDevices.length) {
+      const devs = await navigator.mediaDevices.enumerateDevices();
+      camDevices = devs.filter(d => d.kind === 'videoinput');
+      camSwitch.style.display = camDevices.length > 1 ? '' : 'none';
+    }
+    camCanvas = camCanvas || document.createElement('canvas');
+    camCtx = camCtx || camCanvas.getContext('2d', { willReadFrequently: true });
+    cancelAnimationFrame(camRAF);
+    camLoop();
+  } catch (err) {
+    const map = {
+      NotAllowedError:  I18N.t('client.shifts-live.permiso_de_camara_denegado'),
+      NotFoundError:    I18N.t('client.shifts-live.no_se_encontro_ninguna_camara'),
+      NotReadableError: I18N.t('client.shifts-live.la_camara_esta_en_uso_por_otra_app'),
+    };
+    camSetStatus(map[err.name] || ((I18N.t('client.shifts-live.error_de_camara')) + (err.message || err.name)));
+  }
+}
+
+function camLoop() {
+  camRAF = requestAnimationFrame(camLoop);
+  if (camVideo.readyState !== camVideo.HAVE_ENOUGH_DATA) return;
+  const w = camVideo.videoWidth, h = camVideo.videoHeight;
+  if (!w || !h) return;
+  camCanvas.width = w; camCanvas.height = h;
+  camCtx.drawImage(camVideo, 0, 0, w, h);
+  let img;
+  try { img = camCtx.getImageData(0, 0, w, h); } catch (e) { return; }
+  const result = jsQR(img.data, w, h, { inversionAttempts: 'dontInvert' });
+  if (!result || !result.data) return;
+  const code = result.data.trim();
+  // Solo nos interesan los QR de piloto (DRV:<id>); ignoramos otros códigos.
+  if (!/^DRV:/i.test(code)) return;
+  const now = Date.now();
+  // Anti-rebote: no reenviar el mismo código en una ráfaga de frames.
+  if (code === camLastCode && now - camLastTs < 3000) return;
+  camLastCode = code; camLastTs = now;
+  camFlash();
+  submitCode(code);
+}
+
+function camStopStream() {
+  if (camRAF) { cancelAnimationFrame(camRAF); camRAF = null; }
+  if (camStream) { camStream.getTracks().forEach(t => t.stop()); camStream = null; }
+  if (camVideo) camVideo.srcObject = null;
+}
+
+// Activa el dock de cámara (modo quiosco). persist=false al auto-arrancar.
+function camEnable(persist) {
+  camOn = true;
+  camDock.hidden = false;
+  kioskWrap.classList.add('is-cam');
+  camBtn.classList.add('is-active');
+  camBtn.setAttribute('aria-pressed', 'true');
+  if (persist !== false) { try { localStorage.setItem(CAM_PREF, '1'); } catch (e) {} }
+  camLastCode = ''; camLastTs = 0;
+  camStart();
+  setTimeout(() => { if (window.scRemeasure) window.scRemeasure(); }, 60);
+}
+
+function camDisable(persist) {
+  camOn = false;
+  camStopStream();
+  camDock.hidden = true;
+  kioskWrap.classList.remove('is-cam');
+  camBtn.classList.remove('is-active');
+  camBtn.setAttribute('aria-pressed', 'false');
+  if (persist !== false) { try { localStorage.removeItem(CAM_PREF); } catch (e) {} }
+  refocus();
+  setTimeout(() => { if (window.scRemeasure) window.scRemeasure(); }, 60);
+}
+
+camBtn.addEventListener('click', () => { camOn ? camDisable() : camEnable(); });
+camSwitch.addEventListener('click', async () => {
+  if (camDevices.length < 2) return;
+  camDeviceIdx = (camDeviceIdx + 1) % camDevices.length;
+  camStopStream();
+  await camStart(camDevices[camDeviceIdx].deviceId);
+});
+window.addEventListener('beforeunload', camStopStream);
+
+// Auto-arranque del quiosco: si quedó activada y el contexto es seguro,
+// la cámara se enciende sola al cargar (tras el primer permiso concedido).
+(function () {
+  let pref = false;
+  try { pref = localStorage.getItem(CAM_PREF) === '1'; } catch (e) {}
+  if (pref && window.isSecureContext) camEnable(false);
+})();
+
+// ── Toast ─────────────────────────────────────────────────────────
+const toastWrap = document.getElementById('scToasts');
+function toast(kind, text) {
+  const el = document.createElement('div');
+  el.className = 'sc-toast sc-toast--' + kind;
+  el.textContent = text;
+  toastWrap.appendChild(el);
+  setTimeout(() => el.classList.add('sc-toast--out'), 3500);
+  setTimeout(() => el.remove(), 4500);
+}
+
+// ── Socket: ticks de turnos + driver_checkin + manga state ────────
+const socket = io({ transports: ['websocket', 'polling'] });
+
+socket.on('shifts:tick', data => {
+  if (!data || data.mangaId !== MANGA_ID) return;
+  const active = data.active || {};
+  document.querySelectorAll('.sc-lane').forEach(card => {
+    const lane = parseInt(card.dataset.lane, 10);
+    const a = active[lane];
+    if (!a) return;
+    // TURNO en curso
+    const shiftCell = card.querySelector('[data-shift-ms]');
+    if (shiftCell) {
+      shiftCell.dataset.shiftMs = a.drivingMs;
+      shiftCell.textContent = fmtTime(a.drivingMs);
+    }
+    // TOTAL PILOTO = turnos previos (base) + turno en curso. Se actualiza al
+    // momento, arriba (celda) y abajo (fila del piloto activo en el roster).
+    const totalCell = card.querySelector('[data-total-ms]');
+    if (totalCell) {
+      const base = parseInt(totalCell.dataset.totalBaseMs, 10) || 0;
+      const liveTotal = base + (a.drivingMs || 0);
+      totalCell.dataset.totalMs = liveTotal;
+      totalCell.textContent = fmtTime(liveTotal);
+      const rostTime = card.querySelector('.sc-lane__rost.is-now .sc-lane__rost-time');
+      if (rostTime) rostTime.textContent = fmtTime(liveTotal);
+    }
+  });
+});
+
+socket.on('tick', data => {
+  if (!data) return;
+  const remEl = document.getElementById('scRemaining');
+  if (remEl && data.remainingMs != null) {
+    const locked = data.remainingMs <= LOCKOUT_MS && data.remainingMs > 0;
+    remEl.textContent = (I18N.t('client.shifts-live.restante')) + fmtTime(data.remainingMs);
+    remEl.classList.toggle('sc-locked', locked);
+  }
+});
+
+// Una sola recarga en cola: si llegan varios ecos seguidos, el primero ya
+// recogerá todos los cambios al recargar. Evita además que recargas
+// encadenadas pisen el check verde una y otra vez.
+let _reloadTimer = null;
+function scheduleReload(delay) {
+  if (_reloadTimer) return;
+  _reloadTimer = setTimeout(() => location.reload(), delay);
+}
+
+socket.on('driver_checkin', data => {
+  if (!data || data.mangaId !== MANGA_ID) return;
+  // Para mantener simple, recargamos tras un cambio (no hay hot-update del
+  // panel). PERO si el fichaje lo acabamos de hacer en esta misma estación,
+  // esperamos a que el check verde grande termine (bigFeedback dura 4 s) —
+  // antes se recargaba a los 300 ms y el ✓ apenas se veía. Desde otra
+  // pantalla el fichaje no es local, así que se recarga enseguida.
+  const sinceLocal = Date.now() - (window._lastLocalCheckin || 0);
+  scheduleReload(sinceLocal < 9000 ? 7500 : 2500);
+});
+
+['manga:started', 'manga:paused', 'manga:cancelled', 'manga:stopped'].forEach(ev => {
+  socket.on(ev, () => scheduleReload(500));
+});
+
+</script>
+
+<!-- Paginación automática en bloque aislado: aunque algo del script
+     principal fallara, la rotación de páginas sigue funcionando. -->
+<script>
+(function () {
+  // Modo "todas las tarjetas" (?allcards=1): el operador abre esta vista en una
+  // ventana aparte para ver los 24 carriles a la vez, sin esperar al pase de
+  // hojas. Se oculta todo lo accesorio (escáner, pre-arme, panel lateral) y la
+  // rejilla de carriles NO se pagina: se muestra entera y hace scroll.
+  const ALL_CARDS = new URLSearchParams(location.search).has('allcards');
+  if (ALL_CARDS) document.documentElement.classList.add('sc-allcards');
+
+  // Botón de la cabecera → abre esta misma vista en modo panel, en otra ventana.
+  const allBtn = document.getElementById('scAllCardsBtn');
+  if (allBtn) allBtn.addEventListener('click', () => {
+    const u = new URL(location.href);
+    u.searchParams.set('allcards', '1');
+    window.open(u.toString(), 'pitwall-allcards', 'width=1500,height=950');
+  });
+
+  // Pantalla completa del panel (mismo comportamiento que el live de carrera).
+  const fsBtn = document.getElementById('scFsBtn');
+  if (fsBtn) {
+    fsBtn.addEventListener('click', () => {
+      const el = document.documentElement;
+      if (!document.fullscreenElement) {
+        (el.requestFullscreen || el.webkitRequestFullscreen || (() => {})).call(el);
+      } else {
+        (document.exitFullscreen || document.webkitExitFullscreen || (() => {})).call(document);
+      }
+    });
+    document.addEventListener('fullscreenchange', () => {
+      const on = !!document.fullscreenElement;
+      const open = fsBtn.querySelector('.sc-fs-open'), close = fsBtn.querySelector('.sc-fs-close');
+      if (open)  open.hidden = on;
+      if (close) close.hidden = !on;
+      fsBtn.title = on ? <%- JSON.stringify(t('shifts-live.salir_de_pantalla_completa')) %>
+                       : <%- JSON.stringify(t('common.pantalla_completa')) %>;
+    });
+  }
+
+  // Muestra una "página" de elementos a la vez y rota cada intervalo. El nº
+  // por página se mide según el alto visible (se adapta a la pantalla).
+  function makePager(viewport, container, indicator, intervalMs) {
+    if (!viewport || !container) return null;
+    const items = Array.from(container.children);
+    if (!items.length) return null;
+    let pageSize = items.length, pages = 1, page = 0;
+    function fits() {
+      items.forEach(it => { it.style.display = ''; });
+      const ch = viewport.clientHeight;
+      if (!ch) return items.length;               // aún sin layout: reintentaremos
+      const top = viewport.getBoundingClientRect().top;
+      let n = 0;
+      for (const it of items) {
+        const r = it.getBoundingClientRect();
+        if (r.bottom - top <= ch) n++; else break;   // estricto: solo filas 100% visibles
+      }
+      return Math.max(1, n);
+    }
+    function render() {
+      const start = page * pageSize, end = start + pageSize;
+      items.forEach((it, i) => { it.style.display = (i >= start && i < end) ? '' : 'none'; });
+      if (indicator) indicator.textContent = pages > 1 ? (page + 1) + '/' + pages : '';
+    }
+    function measure() {
+      pageSize = fits();
+      pages = Math.max(1, Math.ceil(items.length / pageSize));
+      if (page >= pages) page = 0;
+      render();
+    }
+    measure();
+    setInterval(() => { if (pages > 1) { page = (page + 1) % pages; render(); } }, intervalMs);
+    return { measure };
+  }
+
+  // Ajusta la altura del bloque al viewport real (sin depender de un offset
+  // fijo) → los paneles quedan acotados a lo visible y no hace falta scroll.
+  function fitKioskHeight() {
+    const k = document.getElementById('scKiosk');
+    if (!k) return;
+    const top = k.getBoundingClientRect().top;
+    k.style.height = Math.max(360, Math.floor(window.innerHeight - top - 12)) + 'px';
+  }
+  fitKioskHeight();
+
+  // En modo panel no se pagina la rejilla de carriles (se ven todos, con scroll)
+  // ni hace falta el panel lateral de pilotos.
+  const lanePager   = ALL_CARDS ? null : makePager(document.getElementById('scLaneArea'),    document.getElementById('scLaneGrid'),    document.getElementById('scLaneInd'),   10000);
+  const pilotsPager = ALL_CARDS ? null : makePager(document.getElementById('scPilotsPages'), document.getElementById('scPilotsPages'), document.getElementById('scPilotsInd'), 10000);
+  function remeasure() { if (!ALL_CARDS) fitKioskHeight(); if (lanePager) lanePager.measure(); if (pilotsPager) pilotsPager.measure(); }
+  window.scRemeasure = remeasure;
+
+  // Re-medir cuando el layout ya está listo (carga, fuentes) y por si acaso
+  // tras unos instantes; también al redimensionar / abrir-cerrar la cámara.
+  window.addEventListener('load', remeasure);
+  if (document.fonts && document.fonts.ready) document.fonts.ready.then(remeasure);
+  setTimeout(remeasure, 300);
+  setTimeout(remeasure, 1200);
+  let _rzT; window.addEventListener('resize', () => { clearTimeout(_rzT); _rzT = setTimeout(remeasure, 200); });
+})();
+</script>
+<% } else { %>
+<script src="/socket.io/socket.io.js"></script>
+<script>
+// Sin manga activa: recargar cuando alguna manga arranca.
+const socket = io({ transports: ['websocket', 'polling'] });
+socket.on('manga:started', () => location.reload());
+</script>
+<% } %>
+
+<style>
+.vt-page--shifts .sc-scan-bar {
+  display: flex; align-items: center; gap: 12px;
+  padding: 14px 18px; margin-top: 22px;
+  background: var(--vt-panel); border: 1px solid var(--vt-border);
+  border-radius: 14px;
+  font-family: 'Saira Condensed', sans-serif;
+  font-weight: 700; letter-spacing: .12em; text-transform: uppercase;
+  font-size: 14px;
+}
+.vt-page--shifts .sc-scan-led {
+  width: 14px; height: 14px; border-radius: 50%; flex: none;
+  background: var(--vt-mute-2); box-shadow: 0 0 0 3px rgba(255,255,255,.04);
+  transition: background .2s;
+}
+.vt-page--shifts .sc-scan-bar[data-state="ready"] .sc-scan-led { background: var(--vt-green); box-shadow: 0 0 12px var(--vt-green), 0 0 0 3px rgba(34,197,94,.18); }
+.vt-page--shifts .sc-scan-bar[data-state="warn"]  .sc-scan-led { background: var(--vt-amber); box-shadow: 0 0 12px var(--vt-amber); }
+.vt-page--shifts .sc-scan-bar[data-state="busy"]  .sc-scan-led { background: var(--vt-blue);  animation: scBlink .6s infinite; }
+@keyframes scBlink { 50% { opacity: .3; } }
+.vt-page--shifts .sc-scan-msg { color: var(--vt-text); }
+.vt-page--shifts .sc-remaining { font-family: 'IBM Plex Mono', monospace; font-size: 13px; color: var(--vt-mute); }
+.vt-page--shifts .sc-remaining.sc-locked { color: var(--vt-amber); }
+
+/* ── Reglas de turnos en la cabecera ─────────────────────────────────────
+   Los puntos usan los mismos colores que la leyenda de carriles: morado el
+   mínimo (BAJO MÍN.), rojo el máximo (PASADO). */
+.vt-page--shifts .sc-rules {
+  display: flex; gap: 8px; flex-wrap: wrap; margin-top: 8px;
+}
+.vt-page--shifts .sc-rule {
+  display: inline-flex; align-items: baseline; gap: 8px;
+  background: var(--vt-surface); border: 1px solid var(--vt-border);
+  border-radius: 8px; padding: 5px 11px;
+}
+.vt-page--shifts .sc-rule__l {
+  font-family: 'Saira Condensed', sans-serif; text-transform: uppercase;
+  letter-spacing: .1em; font-size: 10px; font-weight: 700; color: var(--vt-mute);
+}
+.vt-page--shifts .sc-rule__v {
+  font-family: 'IBM Plex Mono', monospace; font-size: 14px; font-weight: 700;
+  color: var(--vt-text); font-variant-numeric: tabular-nums;
+}
+.vt-page--shifts .sc-rule.is-min .sc-rule__l::before,
+.vt-page--shifts .sc-rule.is-max .sc-rule__l::before {
+  content: ''; display: inline-block; width: 7px; height: 7px; border-radius: 50%;
+  margin-right: 6px; vertical-align: middle;
+}
+.vt-page--shifts .sc-rule.is-min .sc-rule__l::before { background: #c792ea; }
+.vt-page--shifts .sc-rule.is-max .sc-rule__l::before { background: var(--vt-red); }
+
+/* ── Pre-arme: una casilla por carril, agrupadas por caja ────────────────
+   Se lee de un golpe y desde lejos, que es lo que hace falta en el box con
+   gente alrededor. Vive fuera de la cuadrícula paginada a propósito. */
+.vt-page--shifts .sc-prearm {
+  margin-top: 10px; padding: 16px 18px;
+  background: var(--vt-panel); border: 1px solid var(--vt-border); border-radius: 14px;
+}
+.vt-page--shifts .sc-prearm.is-complete { border-color: color-mix(in srgb, var(--vt-green) 40%, transparent); }
+.vt-page--shifts .sc-prearm__head { display: flex; align-items: baseline; gap: 12px; flex-wrap: wrap; margin-bottom: 14px; }
+.vt-page--shifts .sc-prearm__t {
+  font-family: 'Saira Condensed', sans-serif; text-transform: uppercase;
+  letter-spacing: .16em; font-size: 12.5px; font-weight: 700; color: var(--vt-mute);
+}
+.vt-page--shifts .sc-prearm__n {
+  margin-left: auto; font-family: 'IBM Plex Mono', monospace;
+  font-size: 15px; font-weight: 700; color: var(--vt-amber); font-variant-numeric: tabular-nums;
+}
+.vt-page--shifts .sc-prearm.is-complete .sc-prearm__n { color: var(--vt-green); }
+
+/* align-items:flex-start para que los chips puedan envolver a varias líneas sin
+   estirar la fila de casillas. */
+.vt-page--shifts .sc-prearm__row { display: flex; align-items: flex-start; gap: 12px; margin-bottom: 9px; }
+.vt-page--shifts .sc-prearm__box {
+  font-family: 'Saira Condensed', sans-serif; text-transform: uppercase;
+  letter-spacing: .12em; font-size: 11px; font-weight: 700; color: var(--vt-mute);
+  width: 76px; flex: none; padding-top: 9px;
+}
+.vt-page--shifts .sc-prearm__cells { display: flex; gap: 6px; flex-wrap: wrap; flex: none; }
+.vt-page--shifts .sc-prearm__cell {
+  width: 34px; height: 30px; border-radius: 7px; display: grid; place-items: center;
+  font-family: 'IBM Plex Mono', monospace; font-size: 11px; font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  background: color-mix(in srgb, var(--vt-green) 22%, var(--vt-surface));
+  border: 1px solid color-mix(in srgb, var(--vt-green) 45%, transparent);
+  color: #bff0d0;
+}
+.vt-page--shifts .sc-prearm__cell.is-missing {
+  background: color-mix(in srgb, var(--vt-amber) 16%, var(--vt-surface));
+  border: 1px dashed var(--vt-amber); color: var(--vt-amber);
+}
+/* Carril sin equipo esta manga (descanso o hueco): ni cuenta ni distrae. */
+.vt-page--shifts .sc-prearm__cell.is-off {
+  background: var(--vt-surface); border: 1px solid var(--vt-border); color: var(--vt-mute-2);
+}
+/* Los equipos que faltan, SIEMPRE por su nombre: es lo que el staff va a gritar
+   por el box. Como chips, para que 8 nombres envuelvan sin volverse un párrafo. */
+.vt-page--shifts .sc-prearm__miss {
+  flex: 1 1 240px; min-width: 0; padding-top: 3px;
+  display: flex; flex-wrap: wrap; gap: 5px; align-content: flex-start;
+  font-family: 'IBM Plex Mono', monospace; font-size: 12px; color: var(--vt-amber);
+}
+.vt-page--shifts .sc-prearm__chip {
+  display: inline-flex; align-items: center; gap: 6px;
+  background: color-mix(in srgb, var(--vt-amber) 10%, var(--vt-surface));
+  border: 1px solid color-mix(in srgb, var(--vt-amber) 30%, transparent);
+  border-radius: 14px; padding: 2px 9px 2px 3px;
+  font-family: 'Saira Condensed', sans-serif; text-transform: uppercase;
+  letter-spacing: .04em; font-size: 12.5px; font-weight: 700; color: var(--vt-text);
+  max-width: 210px;
+}
+.vt-page--shifts .sc-prearm__chip b {
+  font-family: 'IBM Plex Mono', monospace; font-size: 10.5px; font-weight: 700;
+  background: var(--vt-amber); color: #000; border-radius: 10px; padding: 1px 6px;
+  letter-spacing: 0; flex: none;
+}
+.vt-page--shifts .sc-prearm__miss.is-ok {
+  color: var(--vt-green); align-items: center;
+  font-family: 'Saira Condensed', sans-serif; text-transform: uppercase;
+  letter-spacing: .12em; font-weight: 700; font-size: 12px; padding-top: 9px;
+}
+.vt-page--shifts .sc-prearm__foot {
+  margin-top: 12px; padding-top: 12px; border-top: 1px solid var(--vt-border);
+  font-size: 11.5px; color: var(--vt-mute);
+}
+.vt-page--shifts .sc-prearm__legend { display: flex; gap: 16px; }
+.vt-page--shifts .sc-prearm__legend span { display: inline-flex; align-items: center; gap: 7px; }
+.vt-page--shifts .sc-prearm__dot { width: 12px; height: 12px; border-radius: 4px; flex: none; }
+.vt-page--shifts .sc-prearm__dot.is-ok {
+  background: color-mix(in srgb, var(--vt-green) 40%, var(--vt-surface));
+  border: 1px solid color-mix(in srgb, var(--vt-green) 55%, transparent);
+}
+.vt-page--shifts .sc-prearm__dot.is-missing {
+  background: color-mix(in srgb, var(--vt-amber) 20%, var(--vt-surface));
+  border: 1px dashed var(--vt-amber);
+}
+.vt-page--shifts .sc-prearm__done {
+  font-family: 'Saira Condensed', sans-serif; text-transform: uppercase;
+  letter-spacing: .12em; font-size: 13px; font-weight: 700; color: var(--vt-green);
+}
+
+.vt-page--shifts .sc-scan-input {
+  position: fixed; left: -9999px; top: -9999px; width: 1px; height: 1px;
+  opacity: 0;
+}
+
+/* Tarjetas compactas: con 24 carriles importa más cuántas caben de una vez
+   que lo grande que sea cada una. */
+.vt-page--shifts .sc-lane-grid {
+  display: grid; grid-template-columns: repeat(auto-fit, minmax(185px, 1fr));
+  gap: 10px; margin-top: 14px;
+}
+
+/* ── Modo panel "todas las tarjetas" (?allcards=1) ─────────────────────────
+   Ventana aparte con los 24 carriles a la vez. Se oculta todo lo accesorio y
+   la rejilla ocupa toda la ventana, con scroll si no caben. Las tarjetas
+   siguen actualizándose en vivo (mismo socket). */
+.sc-allcards .vt-back-link,
+.sc-allcards .sc-left,
+.sc-allcards .sc-prearm,
+.sc-allcards .sc-pilots-panel,
+.sc-allcards .sc-rules,
+.sc-allcards .sc-lane-head .sc-pages-ind { display: none !important; }
+.sc-allcards .vt-page--shifts { padding-top: 8px; }
+.sc-allcards .sc-kiosk { display: block !important; height: auto !important; }
+.sc-allcards .sc-kiosk__main { width: 100% !important; }
+.sc-allcards .sc-lane-area { overflow: visible !important; flex: none !important; }
+.sc-allcards .sc-lane-grid { grid-template-columns: repeat(auto-fill, minmax(230px, 1fr)); }
+/* La tarjeta usa alto automático (el JS de autoajuste fija --sc-lane-h, pero
+   con scroll no importa que alguna crezca). */
+.sc-allcards .sc-lane { height: auto !important; }
+/* Botón de pantalla completa flotante (solo en el modo panel). Con acento y
+   sombra para que destaque sobre el fondo negro de la esquina. */
+.sc-fs-btn { display: none; }
+.sc-allcards .sc-fs-btn {
+  display: inline-flex; align-items: center; justify-content: center;
+  /* z-index 200: por encima de la barra de navegación (.navbar, z-index 100),
+     que si no tapa el botón con su fondo negro. */
+  position: fixed; top: 14px; right: 16px; z-index: 200;
+  width: 46px; height: 46px; padding: 0;
+  background: var(--vt-blue, #58a6ff); color: #061018;
+  border: 1px solid rgba(255,255,255,.35); border-radius: 12px;
+  box-shadow: 0 4px 14px rgba(0,0,0,.55), 0 0 0 3px rgba(88,166,255,.18);
+  cursor: pointer; transition: transform .1s ease, filter .1s ease;
+}
+.sc-allcards .sc-fs-btn:hover { filter: brightness(1.12); transform: translateY(-1px); }
+.sc-allcards .sc-fs-btn:active { transform: translateY(0); }
+.sc-allcards .sc-fs-btn svg { width: 24px; height: 24px; }
+
+/* ── Invitado (IP externa no autorizada): vista de SOLO LECTURA ────────────
+   Los elementos siguen en el DOM (el script de la página los referencia sin
+   comprobar null) — se ocultan por CSS, igual que el modo panel de arriba.
+   Los POST de checkin/correct-time los bloquea aparte `restrictAccess`. */
+.sc-guest .sc-left,
+.sc-guest .sc-lane__fix,
+.sc-guest .sc-fix-modal { display: none !important; }
+.vt-page--shifts .sc-lane {
+  background: linear-gradient(180deg, var(--vt-panel), var(--vt-panel-2));
+  border: 1px solid var(--vt-border); border-radius: 12px;
+  padding: 8px 11px;
+  display: flex; flex-direction: column; gap: 5px;
+}
+.vt-page--shifts .sc-lane__head { display: flex; align-items: center; gap: 8px; }
+.vt-page--shifts .sc-lane__num {
+  font-family: 'IBM Plex Mono', monospace; font-weight: 700;
+  background: var(--vt-surface-2); color: var(--vt-mute);
+  padding: 1px 6px; border-radius: 5px; font-size: 11px;
+}
+.vt-page--shifts .sc-lane__team {
+  font-family: 'Saira Condensed', sans-serif; font-weight: 700;
+  text-transform: uppercase; letter-spacing: .04em; font-size: 13.5px; color: #fff;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+/* El nombre del piloto encoge por tramos en vez de cortarse con «…».
+   Las clases las decide driverSize() según la longitud del nombre. */
+.vt-page--shifts .sc-lane__driver {
+  font-size: 17px; font-weight: 700; color: #fff; min-height: 20px; line-height: 1.15;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.vt-page--shifts .sc-lane__driver.is-long   { font-size: 15px; }
+.vt-page--shifts .sc-lane__driver.is-xlong  { font-size: 13px; letter-spacing: -.01em; }
+/* Los muy largos ("ANDER GOENAGA IRIONDO") se parten por palabras: dos líneas
+   caben en el mismo alto que una de 17px. */
+.vt-page--shifts .sc-lane__driver.is-xxlong {
+  font-size: 11.5px; line-height: 1.05; white-space: normal;
+  display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical;
+  overflow-wrap: anywhere;
+}
+.vt-page--shifts .sc-lane__empty { color: var(--vt-mute-2); font-weight: 500; font-style: italic; font-size: 14px; }
+.vt-page--shifts .sc-lane__stats {
+  display: grid; grid-template-columns: 1fr 1fr; gap: 6px;
+  padding-top: 5px; border-top: 1px solid var(--vt-border);
+}
+.vt-page--shifts .sc-lane__lbl {
+  display: block; font-size: 8.5px; letter-spacing: .09em; line-height: 1.3;
+  text-transform: uppercase; color: var(--vt-mute);
+  margin-bottom: 0;
+}
+.vt-page--shifts .sc-lane__val {
+  font-family: 'IBM Plex Mono', monospace; font-size: 14px; font-weight: 700; color: var(--vt-text);
+  font-variant-numeric: tabular-nums; line-height: 1.2;
+}
+.vt-page--shifts .sc-lane__history {
+  font-size: 11.5px; color: var(--vt-mute); padding-top: 6px;
+  display: flex; flex-direction: column; gap: 2px;
+  border-top: 1px dashed var(--vt-border);
+}
+
+.vt-page--shifts .sc-section { margin-top: 28px; }
+.vt-page--shifts .sc-summary { display: flex; flex-direction: column; gap: 6px; }
+.vt-page--shifts .sc-pilot-row {
+  display: grid; grid-template-columns: 200px 1fr 76px 140px 90px;
+  gap: 14px; align-items: center;
+  padding: 10px 14px; border-radius: 10px;
+  background: var(--vt-panel-2); border: 1px solid var(--vt-border);
+}
+.vt-page--shifts .sc-pilot-row__name { display: flex; align-items: center; gap: 8px; font-weight: 600; color: var(--vt-text); }
+.vt-page--shifts .sc-pilot-row__runs { text-align: center; line-height: 1; }
+.vt-page--shifts .sc-pilot-row__runs-n {
+  display: block; font-family: 'IBM Plex Mono', monospace;
+  font-size: 20px; font-weight: 700; color: var(--vt-text);
+}
+.vt-page--shifts .sc-pilot-row__runs-l {
+  display: block; margin-top: 3px; font-size: 9.5px; letter-spacing: .1em;
+  text-transform: uppercase; color: var(--vt-mute);
+}
+.vt-page--shifts .sc-pilot-row__runs-max { color: var(--vt-mute); font-size: 14px; }
+.vt-page--shifts .sc-pilot-row__runs.is-near .sc-pilot-row__runs-n { color: var(--vt-amber); }
+.vt-page--shifts .sc-pilot-row__runs.is-over .sc-pilot-row__runs-n,
+.vt-page--shifts .sc-pilot-row__runs.is-over .sc-pilot-row__runs-l { color: var(--vt-red); }
+.vt-page--shifts .sc-pilot-row__bar {
+  position: relative; height: 8px; border-radius: 4px;
+  background: var(--vt-surface-2); overflow: hidden;
+}
+.vt-page--shifts .sc-pilot-row__bar-fill {
+  position: absolute; left: 0; top: 0; bottom: 0;
+  background: var(--vt-green); border-radius: 4px;
+  transition: width .3s;
+}
+.vt-page--shifts .sc-pilot-row__bar-fill.is-warn { background: var(--vt-amber); }
+.vt-page--shifts .sc-pilot-row__bar-fill.is-bad  { background: var(--vt-red); }
+.vt-page--shifts .sc-pilot-row__bar-fill.is-info { background: var(--vt-blue); }
+.vt-page--shifts .sc-pilot-row__bar-min {
+  position: absolute; top: -3px; bottom: -3px; width: 2px;
+  background: rgba(255,255,255,.5);
+}
+.vt-page--shifts .sc-pilot-row__total { font-family: 'IBM Plex Mono', monospace; font-size: 14px; text-align: right; }
+.vt-page--shifts .sc-pilot-row__status { text-align: right; }
+@media (max-width: 720px) {
+  .vt-page--shifts .sc-pilot-row { grid-template-columns: 1fr; gap: 6px; }
+}
+
+/* Feedback grande de fichaje (✓/✗) para el piloto */
+.vt-page--shifts .sc-feedback {
+  position: fixed; inset: 0; z-index: 11000;
+  display: flex; align-items: center; justify-content: center;
+  pointer-events: none;
+}
+.vt-page--shifts .sc-feedback[hidden] { display: none; }
+.vt-page--shifts .sc-feedback__box {
+  text-align: center; padding: 40px 64px; border-radius: 26px;
+  backdrop-filter: blur(3px);
+  transform: scale(.88); animation: scFbIn .16s ease-out forwards;
+}
+.vt-page--shifts .sc-feedback.is-out .sc-feedback__box { animation: scFbOut .3s ease-in forwards; }
+.vt-page--shifts .sc-feedback.is-ok .sc-feedback__box {
+  background: linear-gradient(180deg, rgba(34,197,94,.26), rgba(34,197,94,.12));
+  border: 2px solid var(--vt-green); box-shadow: 0 0 80px -12px var(--vt-green);
+}
+.vt-page--shifts .sc-feedback.is-error .sc-feedback__box {
+  background: linear-gradient(180deg, rgba(239,68,68,.26), rgba(239,68,68,.12));
+  border: 2px solid var(--vt-red); box-shadow: 0 0 80px -12px var(--vt-red);
+}
+.vt-page--shifts .sc-feedback__icon { font-size: 92px; line-height: 1; font-weight: 700; }
+.vt-page--shifts .sc-feedback.is-ok    .sc-feedback__icon { color: var(--vt-green); }
+.vt-page--shifts .sc-feedback.is-error .sc-feedback__icon { color: var(--vt-red); }
+.vt-page--shifts .sc-feedback__title {
+  margin-top: 8px; font-family: 'Saira Condensed', sans-serif; font-weight: 700;
+  font-size: 46px; letter-spacing: .02em; color: var(--vt-text);
+}
+.vt-page--shifts .sc-feedback__sub { margin-top: 6px; font-size: 24px; color: var(--vt-mute); }
+@keyframes scFbIn  { to { transform: scale(1); } }
+@keyframes scFbOut { to { opacity: 0; transform: scale(1.04); } }
+
+/* Botón "corregir tiempo" en la card de carril */
+.vt-page--shifts .sc-lane__fix {
+  margin-left: auto; flex: 0 0 auto;
+  width: 26px; height: 26px; border-radius: 7px; cursor: pointer;
+  background: var(--vt-surface-2); border: 1px solid var(--vt-border);
+  color: var(--vt-mute); font-size: 13px; line-height: 1;
+  display: inline-flex; align-items: center; justify-content: center;
+  transition: background .15s, color .15s, border-color .15s;
+}
+.vt-page--shifts .sc-lane__fix:hover { background: var(--vt-panel); color: var(--vt-blue); border-color: var(--vt-blue); }
+
+/* Modal corregir tiempo */
+.vt-page--shifts .sc-fix-modal {
+  position: fixed; inset: 0; z-index: 11500;
+  display: flex; align-items: center; justify-content: center;
+  background: rgba(0,0,0,.6); backdrop-filter: blur(3px); padding: 20px;
+}
+.vt-page--shifts .sc-fix-modal[hidden] { display: none; }
+.vt-page--shifts .sc-fix-box {
+  width: min(420px, 100%); background: var(--vt-panel); border: 1px solid var(--vt-border);
+  border-radius: 16px; padding: 18px 20px; box-shadow: 0 24px 60px -16px rgba(0,0,0,.85);
+}
+.vt-page--shifts .sc-fix-head {
+  display: flex; align-items: center; justify-content: space-between; gap: 10px;
+  font-family: 'Saira Condensed', sans-serif; font-weight: 700; font-size: 20px;
+  letter-spacing: .04em; text-transform: uppercase; margin-bottom: 6px;
+}
+.vt-page--shifts .sc-fix-hint { color: var(--vt-mute); font-size: 13px; margin: 0 0 8px; }
+.vt-page--shifts .sc-fix-lbl {
+  display: block; font-size: 11px; letter-spacing: .08em; text-transform: uppercase;
+  color: var(--vt-mute); margin: 10px 0 4px;
+}
+.vt-page--shifts .sc-fix-select, .vt-page--shifts .sc-fix-input {
+  width: 100%; padding: 10px 12px; border-radius: 10px;
+  background: var(--vt-surface-2); border: 1px solid var(--vt-border); color: var(--vt-text);
+  font-size: 15px; font-family: inherit; box-sizing: border-box;
+}
+.vt-page--shifts .sc-fix-input { font-family: 'IBM Plex Mono', monospace; }
+.vt-page--shifts .sc-fix-actions { display: flex; justify-content: flex-end; gap: 10px; margin-top: 18px; }
+
+/* Toasts */
+.vt-page--shifts .sc-toast-wrap {
+  position: fixed; bottom: 24px; right: 24px; z-index: 9999;
+  display: flex; flex-direction: column; gap: 8px; max-width: 360px;
+}
+.vt-page--shifts .sc-toast {
+  padding: 12px 16px; border-radius: 12px;
+  font-family: 'Saira', sans-serif; font-weight: 600; font-size: 14px;
+  color: #fff; box-shadow: 0 14px 28px -10px rgba(0,0,0,.8);
+  transform: translateX(0); transition: transform .25s, opacity .25s;
+  opacity: 1;
+}
+.vt-page--shifts .sc-toast--ok    { background: linear-gradient(180deg, #16a34a, #15803d); }
+.vt-page--shifts .sc-toast--error { background: linear-gradient(180deg, var(--vt-red), var(--vt-red-deep)); }
+.vt-page--shifts .sc-toast--out   { transform: translateX(20px); opacity: 0; }
+
+/* Botón cámara */
+.vt-page--shifts .sc-cam-btn {
+  display: inline-flex; align-items: center; gap: 7px;
+  padding: 7px 14px; border-radius: 10px; cursor: pointer;
+  background: var(--vt-surface-2); color: var(--vt-text);
+  border: 1px solid var(--vt-border);
+  font-family: 'Saira Condensed', sans-serif; font-weight: 700;
+  letter-spacing: .08em; text-transform: uppercase; font-size: 13px;
+  transition: background .15s, border-color .15s;
+}
+.vt-page--shifts .sc-cam-btn:hover { background: var(--vt-panel); border-color: var(--vt-blue); }
+.vt-page--shifts .sc-cam-btn svg { width: 18px; height: 18px; }
+
+/* Modo quiosco: cámara embebida (dock) junto al panel.
+   (El layout/altura del .sc-kiosk se define más abajo con align-items:stretch;
+   NO redefinir aquí .sc-kiosk.is-cam con flex-start, rompía la paginación.) */
+.vt-page--shifts .sc-left { flex: 0 0 340px; width: 340px; display: flex; flex-direction: column; gap: 12px; }
+.vt-page--shifts .sc-left .sc-scan-bar { flex-wrap: wrap; }
+.vt-page--shifts .sc-left .sc-scan-bar .sc-cam-btn { flex: 1 1 100%; justify-content: center; margin-top: 2px; }
+.vt-page--shifts .sc-cam-dock {
+  width: 100%;
+  background: var(--vt-panel); border: 1px solid var(--vt-border);
+  border-radius: 16px; padding: 14px;
+  box-shadow: 0 18px 44px -18px rgba(0,0,0,.7);
+}
+.vt-page--shifts .sc-cam-dock[hidden] { display: none; }
+.vt-page--shifts .sc-cam-btn.is-active {
+  background: var(--vt-blue); border-color: var(--vt-blue); color: #fff;
+}
+@media (max-width: 900px) {
+  .vt-page--shifts .sc-kiosk.is-cam { flex-direction: column; }
+  .vt-page--shifts .sc-cam-dock { position: static; width: 100%; flex-basis: auto; }
+}
+.vt-page--shifts .sc-cam-head {
+  display: flex; align-items: center; gap: 12px; margin-bottom: 12px;
+}
+.vt-page--shifts .sc-cam-status {
+  font-family: 'Saira Condensed', sans-serif; font-weight: 700;
+  letter-spacing: .06em; text-transform: uppercase; font-size: 14px;
+  color: var(--vt-text);
+}
+.vt-page--shifts .sc-cam-acts { display: flex; gap: 8px; margin-left: auto; }
+.vt-page--shifts .sc-cam-view {
+  position: relative; width: 100%; aspect-ratio: 4 / 3;
+  background: #000; border-radius: 12px; overflow: hidden;
+}
+.vt-page--shifts .sc-cam-view video {
+  width: 100%; height: 100%; object-fit: cover; display: block;
+}
+.vt-page--shifts .sc-cam-reticle {
+  position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%);
+  width: 56%; aspect-ratio: 1; border-radius: 16px;
+  border: 3px solid rgba(255,255,255,.7);
+  box-shadow: 0 0 0 9999px rgba(0,0,0,.25);
+  transition: border-color .15s, box-shadow .15s;
+}
+.vt-page--shifts .sc-cam-reticle.is-hit {
+  border-color: var(--vt-green);
+  box-shadow: 0 0 0 9999px rgba(0,0,0,.25), 0 0 24px var(--vt-green);
+}
+.vt-page--shifts .sc-cam-hint {
+  margin-top: 10px; text-align: center; color: var(--vt-mute);
+  font-size: 13px;
+}
+
+/* ── Pantalla completa: sin márgenes laterales ───────────────────── */
+.vt-page--shifts .vt-wrap { max-width: none; margin: 0; padding-left: 18px; padding-right: 18px; }
+
+/* ── Layout a 3 zonas que llena el alto disponible ───────────────── */
+.vt-page--shifts .sc-kiosk {
+  display: flex; align-items: stretch; gap: 16px;
+  height: calc(100vh - 150px);
+}
+.vt-page--shifts .sc-kiosk__main { flex: 1 1 auto; min-width: 0; min-height: 0; display: flex; flex-direction: column; }
+.vt-page--shifts .sc-lane-head { display: flex; align-items: center; gap: 18px; margin-top: 12px; margin-bottom: 2px; }
+.vt-page--shifts .sc-lane-head .sc-pages-ind { margin-left: auto; }
+.vt-page--shifts .sc-legend { display: flex; align-items: center; gap: 14px; flex-wrap: wrap; }
+.vt-page--shifts .sc-legend__i { display: inline-flex; align-items: center; gap: 5px; font-size: 11px; color: var(--vt-mute); text-transform: uppercase; letter-spacing: .05em; }
+.vt-page--shifts .sc-legend__dot { width: 9px; height: 9px; border-radius: 50%; display: inline-block; flex: 0 0 auto; }
+.vt-page--shifts .sc-lane-area { flex: 1 1 auto; min-height: 0; overflow: hidden; margin-top: 6px; }
+.vt-page--shifts .sc-lane-area .sc-lane-grid { margin-top: 0; }
+/* Alto uniforme → paginación limpia. El valor lo calcula la vista a partir del
+   roster MÁS LARGO de la manga (--sc-lane-h), así nunca se corta el último
+   piloto ni sobra hueco cuando los equipos son de tres. */
+.vt-page--shifts .sc-lane { height: var(--sc-lane-h, 196px); overflow: hidden; }
+
+/* Tarjeta de equipo en DESCANSO */
+.vt-page--shifts .sc-lane--rest { border-style: dashed; }
+.vt-page--shifts .sc-lane__num--rest { background: var(--vt-blue); color: #fff; }
+.vt-page--shifts .sc-lane__rest-badge {
+  margin: 12px 0 8px; padding: 7px 10px; border-radius: 8px;
+  background: rgba(58,134,255,.14); color: var(--vt-blue);
+  font-family: 'Saira Condensed', sans-serif; font-weight: 700;
+  letter-spacing: .08em; text-transform: uppercase; font-size: 14px; text-align: center;
+}
+
+/* Roster del equipo dentro de la card: cada piloto con turnos + tiempo total */
+.vt-page--shifts .sc-lane__roster {
+  margin-top: 3px; padding-top: 4px; border-top: 1px solid var(--vt-border);
+  display: flex; flex-direction: column; gap: 0;
+}
+/* 13.5px de fila: un equipo de 6 pilotos entra sin robarle una fila entera de
+   tarjetas a la paginación. El alto real lo mide el script del final. */
+.vt-page--shifts .sc-lane__rost {
+  display: grid; grid-template-columns: minmax(0, 1fr) auto auto; gap: 5px; align-items: center;
+  font-size: 11px; color: var(--vt-mute); padding: 0; height: 13.5px; line-height: 13.5px;
+}
+/* El nombre se queda con todo el sitio sobrante; si aun así no cabe, el título
+   del div lo enseña entero al pasar el ratón. */
+.vt-page--shifts .sc-lane__rost-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.vt-page--shifts .sc-lane__rost-runs { font-family: 'IBM Plex Mono', monospace; font-size: 10px; opacity: .8; }
+.vt-page--shifts .sc-lane__rost-time {
+  font-family: 'IBM Plex Mono', monospace; color: var(--vt-text);
+  min-width: 40px; text-align: right; font-variant-numeric: tabular-nums;
+}
+/* El piloto que conduce ahora, resaltado */
+.vt-page--shifts .sc-lane__rost.is-now .sc-lane__rost-name { color: var(--vt-text); font-weight: 600; }
+.vt-page--shifts .sc-lane__rost.is-now .sc-lane__rost-name::before { content: '▶ '; color: var(--vt-blue); }
+/* A punto de pasarse (tiempo o turnos) → ámbar; pasado → rojo */
+.vt-page--shifts .sc-lane__rost.is-near .sc-lane__rost-name,
+.vt-page--shifts .sc-lane__rost.is-near .sc-lane__rost-runs,
+.vt-page--shifts .sc-lane__rost.is-near .sc-lane__rost-time { color: var(--vt-amber); }
+.vt-page--shifts .sc-lane__rost.is-over .sc-lane__rost-name,
+.vt-page--shifts .sc-lane__rost.is-over .sc-lane__rost-runs,
+.vt-page--shifts .sc-lane__rost.is-over .sc-lane__rost-time { color: var(--vt-red); }
+/* Correcto (ok) → verde */
+.vt-page--shifts .sc-lane__rost.is-ok .sc-lane__rost-name,
+.vt-page--shifts .sc-lane__rost.is-ok .sc-lane__rost-runs,
+.vt-page--shifts .sc-lane__rost.is-ok .sc-lane__rost-time { color: var(--vt-green); }
+/* Aún por debajo del mínimo → lila */
+.vt-page--shifts .sc-lane__rost.is-under .sc-lane__rost-name,
+.vt-page--shifts .sc-lane__rost.is-under .sc-lane__rost-runs,
+.vt-page--shifts .sc-lane__rost.is-under .sc-lane__rost-time { color: #c792ea; }
+
+/* ── Panel lateral de pilotos (derecha), paginado ────────────────── */
+.vt-page--shifts .sc-pilots-panel {
+  flex: 0 0 340px; width: 340px;
+  display: flex; flex-direction: column;
+  background: var(--vt-panel-2); border: 1px solid var(--vt-border);
+  border-radius: 14px; padding: 12px 12px 10px; overflow: hidden; min-height: 0;
+}
+.vt-page--shifts .sc-pilots-panel__head {
+  display: flex; align-items: center; justify-content: space-between;
+  margin-bottom: 8px; flex: 0 0 auto;
+}
+.vt-page--shifts .sc-pages-ind { font-family: 'IBM Plex Mono', monospace; font-size: 12px; color: var(--vt-mute); }
+.vt-page--shifts .sc-pilots-panel .sc-summary { flex: 1 1 auto; min-height: 0; overflow: hidden; display: block; }
+/* Filas compactas para el panel estrecho */
+.vt-page--shifts .sc-pilots-panel .sc-pilot-row {
+  display: flex; align-items: center; gap: 8px;
+  grid-template-columns: none; padding: 6px 9px; margin-bottom: 4px;
+}
+.vt-page--shifts .sc-pilots-panel .sc-pilot-row__name {
+  flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 13px;
+}
+.vt-page--shifts .sc-pilots-panel .sc-pilot-row__bar { display: none; }
+.vt-page--shifts .sc-pilots-panel .sc-pilot-row__runs { flex: 0 0 auto; }
+.vt-page--shifts .sc-pilots-panel .sc-pilot-row__runs-n { font-size: 15px; }
+.vt-page--shifts .sc-pilots-panel .sc-pilot-row__runs-l { display: none; }
+.vt-page--shifts .sc-pilots-panel .sc-pilot-row__runs-max { font-size: 11px; }
+.vt-page--shifts .sc-pilots-panel .sc-pilot-row__total {
+  flex: 0 0 auto; font-family: 'IBM Plex Mono', monospace; font-size: 14px; min-width: 50px; text-align: right;
+}
+.vt-page--shifts .sc-pilots-panel .sc-pilot-row__total span { display: none; }
+.vt-page--shifts .sc-pilots-panel .sc-pilot-row__status .vt-badge { padding: 2px 6px; font-size: 10px; }
+.vt-page--shifts .sc-pilots-panel .sc-pilot-row__status .vt-badge__d { display: none; }
+
+@media (max-width: 1100px) {
+  .vt-page--shifts .sc-kiosk { flex-direction: column; height: auto; }
+  .vt-page--shifts .sc-lane-area { overflow: visible; }
+  .vt-page--shifts .sc-left { width: 100%; flex-basis: auto; }
+  .vt-page--shifts .sc-left .sc-scan-bar .sc-cam-btn { flex: 0 0 auto; margin-top: 0; }
+  .vt-page--shifts .sc-pilots-panel { width: 100%; flex-basis: auto; max-height: 320px; }
+}
+</style>
+
+<%- include('../partials/footer') %>
